@@ -1,0 +1,11 @@
+node_modules/
+dist/
+server-dist/
+.env
+.env.local
+*.local
+coverage/
+.superpowers/
+.DS_Store
+Thumbs.db
+*.log

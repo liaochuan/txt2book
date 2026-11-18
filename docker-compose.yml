@@ -1,0 +1,36 @@
+services:
+  txt2book:
+    build: .
+    image: txt2book:latest
+    # 左侧是宿主机端口，右侧固定为容器内 3000。
+    # 若在 .env 修改 PORT，这里的 3000 与下方 healthcheck 地址必须同步修改，
+    # 否则容器监听端口与探活端口不一致，健康检查会一直失败。
+    ports:
+      - "8080:3000"
+    env_file:
+      - .env
+    # 不设置 TZ：服务端 logger 已关闭，进程内没有本地时间格式化逻辑。
+    # 如未来开启日志并需要固定时区，再取消下面注释。
+    # environment:
+    #   TZ: Asia/Shanghai
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# HTTPS 反向代理部署注意事项：
+#
+# 1. 在 .env 中设置 COOKIE_SECURE=true 与 TRUST_PROXY=true。
+#    - COOKIE_SECURE=true 让会话 Cookie 只经 HTTPS 传输；
+#    - TRUST_PROXY=true 让服务端采用 X-Forwarded-For / X-Forwarded-Proto，
+#      从而按真实客户端 IP 限流并识别 https 请求。
+#
+# 2. 反向代理必须“覆盖”而不是“追加” X-Forwarded-For 与 X-Forwarded-Proto，
+#    否则客户端可以自带伪造头绕过登录限流。Nginx 示例：
+#      proxy_set_header X-Forwarded-For $remote_addr;
+#      proxy_set_header X-Forwarded-Proto $scheme;
+#
+# 3. 只在反向代理已经终结 TLS 时开启上述两项；直接暴露 http 时保持默认 false。

@@ -1,0 +1,23 @@
+.git
+.gitignore
+node_modules
+dist
+server-dist
+coverage
+tests
+docs
+.superpowers
+
+# 环境变量文件不进入构建上下文；示例文件保留，便于查阅。
+.env
+.env.local
+.env.*.local
+!.env.example
+
+.vscode
+.idea
+*.log
+.DS_Store
+Thumbs.db
+README.md
+AGENTS.md

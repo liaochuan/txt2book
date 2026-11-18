@@ -1,0 +1,33 @@
+:root {
+  color-scheme: light;
+
+  /* 配色：浅色底 + 深墨绿主色，去装饰化 */
+  --bg: #f4f6f4;
+  --surface: #ffffff;
+  --border: #dfe4df;
+  --text: #1f2328;
+  --muted: #6b7280;
+  --primary: #1f5c4a;
+  --primary-strong: #17483a;
+  --primary-soft: #e4efe9;
+  --on-primary: #ffffff;
+  --danger: #b42318;
+  --warning: #8a5a00;
+  --warning-soft: #fdf4dc;
+
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 6px 20px rgba(16, 24, 40, 0.06);
+
+  /* 间距刻度：4px 起步，供组件与布局统一引用 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --font-sans:
+    -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-serif: "Songti SC", SimSun, "Noto Serif SC", Georgia, serif;
+}
