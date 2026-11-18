@@ -15,6 +15,15 @@
 - 导出 EPUB 3：一个章节一个 XHTML，包含 `nav.xhtml`、`toc.ncx` 与封面，可选目录页、书名页与卷扉页；三个内容选项默认关闭。
 - 单账号登录保护，登录与封面接口均有限流。
 - 阅读主题独立于应用界面，仅作用于预览与导出内容。
+- 自带站点图标与 PWA manifest，可添加到桌面/主屏。
+
+## 界面与操作
+
+- 三栏布局：左侧目录与 TXT 导入，中间实时预览，右侧书籍信息、封面、主题、排版、自定义规则与导出。
+- 桌面端左侧栏与中间预览都会吸顶：右侧滚动到排版或导出时，目录和预览仍留在视口内；窄屏自动取消吸顶，并在右下角提供「查看预览」按钮。
+- 目录树的折叠箭头与卷名分开：点箭头只折叠/展开，点卷名预览该卷扉页；再次点击同一卷名回到章节。
+- 章节行支持双击或 `F2` 重命名，`Enter` 保存、`Esc` 取消；搜索框按标题实时过滤。
+- 所有阅读排版（主题、高级排版、背景）只作用于预览与导出的电子书，不会改变应用界面。
 
 ## 章节识别规则
 
@@ -79,13 +88,13 @@
 「排版」卡片中的高级排版按元素分别调整：卷标题、卷首文字、章标题、正文、简介与目录。可改字体、字号、行高、段间距、首行缩进、对齐、颜色与上下留白；改动即时反映到预览，导出时使用同一份 CSS。
 
 - 每套主题独立保存排版与背景配置，键名 `txt2book.layout.<themeId>`；「恢复默认」只重置当前主题的排版，不影响其它主题。
-- 背景支持纯 CSS 预设（纸纹、网格、点阵、亚麻）与自定义图片。自定义图上传后由服务端统一转码（最长边 1600px、上限 10MB），预览与 EPUB 使用同一张图。
+- 背景支持纯 CSS 预设（纸纹、网格、点阵、亚麻）与自定义图片。自定义图上传或粘贴后由服务端统一转为 JPEG（质量 82、最长边 1600px、上限 10MB），预览与 EPUB 使用同一张图；透明图会保留为 PNG。
 - 墨水屏主题禁用背景图，并关闭卷扉页底线、连页分隔线等装饰，减少灰阶抖动与残影。
 
 ## 预览与卷扉页
 
 - 预览覆盖正文、主题、高级排版与背景；封面页、书名页、简介页与目录页不在预览内，导出后才会出现。
-- 点击目录树中的卷名可预览卷扉页：卷标题、卷首文字与该卷章节数；再次点击同一卷名，或点击任意章节，回到章节预览。
+- 点击目录树中的卷名可预览卷扉页：只展示卷标题与卷首文字；再次点击同一卷名，或点击任意章节，回到章节预览。
 - 番外分组没有独立扉页，点击其名称只负责展开/折叠。连页模式仍按导出顺序在每卷第一章前插入卷扉页。
 
 ## 导出内容选项
@@ -97,6 +106,45 @@
 | 卷扉页 | 关闭 | 为每个卷生成独立标题页，并展示卷首文字。关闭后卷首文字会以居中样式并入该卷第一章开头，不会丢失。 |
 
 三个选项都不勾选时，EPUB 从正文开始；关闭卷扉页后，卷标题与卷首文字仍会以 `.volume-note-block` 区块出现在该卷第一章顶部，并继续应用卷首文字的高级排版。零章卷的卷首文字会并入其后第一章；若全书没有章节，仍会为这些卷生成卷扉页，避免文字丢失。
+
+## 导出结构
+
+生成的 EPUB 3 结构：
+
+```text
+mimetype                       application/epub+zip（未压缩，ZIP 首项）
+META-INF/container.xml
+OEBPS/
+  content.opf                  元数据、manifest、spine
+  nav.xhtml                    EPUB 3 导航目录（卷 → 章嵌套）
+  toc.ncx                      兼容旧阅读器的目录
+  styles/theme.css             主题 CSS + 高级排版 CSS
+  images/cover.png             封面（始终 PNG）
+  images/background.jpg        自定义背景（可选，JPEG 或 PNG）
+  cover.xhtml                  封面页
+  titlepage.xhtml              书名页（可选）
+  description.xhtml            简介页（有简介时）
+  volume-N.xhtml               卷扉页（可选）
+  text/chapter-N.xhtml         一章一个 XHTML
+```
+
+- 封面与背景都会进入 OPF manifest；背景不会进入 spine。
+- 墨水屏主题不输出任何背景图。
+- 所有文本按纯文本转义后写入 XHTML，并剔除 XML 非法控制字符。
+
+## npm 脚本
+
+| 命令 | 作用 |
+|---|---|
+| `npm run dev` | 前端 Vite 开发服务器（`/api` 代理到 3000） |
+| `npm run dev:server` | 后端开发模式，自动加载 `.env` |
+| `npm run build` | 构建前端与后端 |
+| `npm run build:web` / `npm run build:server` | 单独构建前端 / 后端 |
+| `npm start` | 以生产模式启动，自动加载 `.env` |
+| `npm run typecheck` | `vue-tsc` + 服务端 `tsc --noEmit` |
+| `npm test` | Vitest 全量执行 |
+| `npm run hash-password` | 生成 `AUTH_PASSWORD_HASH`（需要开发依赖） |
+
 
 ## 快速开始（npm）
 
@@ -297,23 +345,29 @@ location / {
 
 ```text
 src/                    前端源码
-  components/           展示组件（目录树、预览、封面、导出、登录等）
-  composables/          组件共享状态（认证、导入、封面、主题、提示）
+  components/           展示组件（目录树、预览、封面、主题、排版、导出、登录等）
+  composables/          组件共享状态（认证、导入、封面、主题、排版、背景、提示）
   core/                 纯逻辑
     chapterParser.ts    内置章节识别
     customRules.ts      自定义规则存储与编译
     chapterOps.ts       重命名、删除、合并、撤销
     preprocess.ts       断行与行首清理
-    render/             章节 XHTML 渲染与主题
+    textReader.ts       编码识别与手动重解码
+    api.ts              前端 API 客户端
+    exportFileName.ts   导出文件名清洗（Windows 保留名等）
+    imageDataUrl.ts     背景字节转 data URL
+    render/             章节 XHTML 渲染、主题与高级排版 CSS
     converters/         格式转换器注册表与 EPUB 实现
   styles/               CSS 变量与全局样式
   types/                前端类型
+  App.vue               主界面装配
 server/                 后端源码
   app.ts                Fastify 实例组装
   index.ts              启动入口（读取配置并监听）
   lib/                  配置、认证、会话、限流、SSRF、图片处理
   routes/               认证与封面路由
   scripts/              密码哈希脚本
+public/                 站点图标、PWA manifest 等静态资源
 tests/                  Vitest 测试与 fixtures
 docs/                   设计与计划文档
 dist/                   前端构建产物（生成）
@@ -322,6 +376,7 @@ Dockerfile              多阶段构建
 docker-compose.yml      单服务编排
 .env.example            配置示例
 ```
+
 
 ## 测试
 
@@ -333,6 +388,37 @@ npm run build   # 构建前端与后端
 
 测试覆盖章节解析（卷、番外、楔子、尾声混排）、章节操作与撤销、XHTML 渲染、EPUB 结构、SSRF 黑名单与重定向校验、认证与会话篡改、限流以及完整的导入导出集成流程。
 
+## 常见问题
+
+**配置了 `.env`，启动仍提示缺少 `SESSION_SECRET` / `AUTH_PASSWORD_HASH`？**
+
+确认使用的是 `npm run dev:server` 或 `npm start`，这两条命令会自动加载项目根目录的 `.env`。手动执行 `node server-dist/index.js` 不会读取 `.env`，需要加 `--env-file=.env`。启动错误信息在检测到 `.env` 时会给出同样提示。
+
+**`npm run dev` 下登录或封面接口返回 403？**
+
+开发代理必须保留浏览器的 `Host`。`vite.config.ts` 已移除 `changeOrigin`，请不要改回去；否则后端 Origin 校验会认为请求跨站。生产环境由同一个服务托管前端与 API，不受影响。
+
+**上传封面或背景返回 413？**
+
+反向代理（常见是 Nginx 默认 `client_max_body_size 1m`）先于应用拒绝了请求。按「HTTPS 反向代理」示例调到 `12m` 以上。应用自身的上限是 10MB。
+
+**登录一直失败，但用户名密码没错？**
+
+检查 `.env` 里的 `AUTH_PASSWORD_HASH` 是否用单引号包裹。哈希含多个 `$`，未加引号会被 `docker compose` 当作变量展开，导致哈希损坏。PowerShell 5.1 下不要用管道传中文密码（会被转成 `??`），请用参数形式 `npm run hash-password -- '你的密码'`。
+
+**电纸书上背景图没显示？**
+
+很多电纸书/阅读器会忽略 EPUB 的 `body` 背景图。墨水屏主题本身不使用背景；如果目标设备是 Kindle 或老款 Kobo，建议优先使用无背景主题。
+
+**换浏览器或清理缓存后，主题排版怎么恢复默认了？**
+
+主题偏好、高级排版与背景都保存在浏览器 `localStorage`（`txt2book.layout.<themeId>`），不随账号同步。清除站点数据或换浏览器会回到默认值。
+
+**导出的书里为什么没有目录页？**
+
+「目录页」默认关闭。它只影响书中那一页可见目录；阅读器自带的导航目录（`nav.xhtml` / `toc.ncx`）始终存在。
+
+
 ## 已知限制
 
 - **大文件在内存中处理**：TXT 由浏览器整体读入并解析，导出时整套书模型与 ZIP 也在内存中；封面在服务端内存中解码、缩放。超大的单文件可能触发浏览器或容器内存上限，建议单本控制在数十 MB 以内。
@@ -341,3 +427,7 @@ npm run build   # 构建前端与后端
 - **仅实现 EPUB**：转换器注册表已预留多格式扩展，但当前只有 EPUB 可用，AZW3、MOBI、PDF 等格式尚未实现。
 - **封面只输出 PNG**：为保证阅读器兼容性，所有封面统一转为 PNG，超大封面会被缩放并可能增大文件体积。
 - **依赖漏洞待升级**：当前 `npm audit --omit=dev` 报告 2 high + 2 moderate。high 来自 `sharp` 及其 libvips/libheif/librsvg 依赖；moderate 来自 `@fastify/static` 传递依赖的 `minimatch`/`glob`。修复需要 breaking 升级（`sharp@0.35.5`、`@fastify/static@10`），升级后应重跑全量测试与封面 URL/上传转换验证，再更新镜像。
+- **背景图依赖阅读器**：EPUB 的 `body` 背景图在部分阅读器（尤其电纸书）会被忽略；自定义背景会统一转成 JPEG 并缩放，透明图转为 PNG。
+- **预览不包含所有结构页**：预览覆盖正文、排版主题、卷扉页与背景，但封面页、书名页、简介页、目录页只在导出的 EPUB 中出现。
+- **墨水屏的分页策略需实机确认**：章标题设置了 `page-break-before`，个别旧阅读器可能在每章前多出一张空白页。
+- **排版配置不跨设备同步**：主题、高级排版与背景保存在浏览器本地，换浏览器或清理站点数据后需要重新设置。
