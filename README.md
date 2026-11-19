@@ -1,6 +1,6 @@
 # txt2book
 
-把 TXT 小说转换为 EPUB 电子书的 Web 工具。前端在浏览器里完成解析、预览与 EPUB 生成，文件不会上传；Node 服务端只负责登录认证、封面抓取/转换与静态资源托管。
+把 TXT 小说转换为 EPUB / HTML / TXT / PDF 的 Web 工具。解析、预览、EPUB / HTML / TXT 生成都在浏览器里完成，文件不会上传；Node 服务端负责登录认证、封面抓取/转换、静态资源托管，以及服务端 PDF 排版。
 
 ## 功能列表
 
@@ -8,14 +8,29 @@
 - 自动识别卷、章、番外、楔子、尾声，生成可折叠的目录树。
 - 章节编辑：重命名、删除（正文自动并入相邻章节）、删除卷（子章节提升为顶层章节），支持撤销。
 - 章节目录搜索过滤。
-- 实时预览：单章切换、连页模式与卷扉页预览，预览与导出共用同一套 XHTML 渲染逻辑；连页模式会在每卷第一章前插入卷扉页（卷名 + 卷首文字）。
-- 五套排版主题：素白、纸墨、夜读、古卷、墨水屏，预览与导出效果一致。
+- 实时预览：单章切换、连页模式与卷扉页预览，预览与 EPUB/HTML 导出共用同一套 XHTML 渲染逻辑；连页模式会在每卷第一章前插入卷扉页（卷名 + 卷首文字），PDF 由服务端另行排版。
+- 五套排版主题：素白、纸墨、夜读、古卷、墨水屏，预览与 EPUB/HTML 导出效果一致（PDF 沿用字体与配色倾向）。
 - 高级排版与背景图：按元素调整字体、字号、行高、段距、首行缩进、对齐与颜色，支持预设背景与自定义图片；每套主题独立保存。
 - 封面：从图片 URL 抓取或上传本地图片，服务端统一转换为 PNG（最长边 1600px）。
+- 多格式导出：EPUB 3、单文件 HTML、整理版 TXT 在浏览器端生成；PDF 由服务端 pdfkit 排版后下载。格式通过 `converterRegistry` 注册，UI 不写死。
 - 导出 EPUB 3：一个章节一个 XHTML，包含 `nav.xhtml`、`toc.ncx` 与封面，可选目录页、书名页与卷扉页；三个内容选项默认关闭。
+- 导出单文件 HTML：主题、排版、封面与背景全部内联，可离线用浏览器打开。
+- 导出整理版 TXT：UTF-8 无 BOM，卷/章标题独占一行，保留正文段落。
+- 导出 PDF：A4 / A5、标准或窄边距、页脚页码、封面、带页码目录、卷→章书签；服务端内置 Noto CJK 中文字体。
 - 单账号登录保护，登录与封面接口均有限流。
 - 阅读主题独立于应用界面，仅作用于预览与导出内容。
 - 自带站点图标与 PWA manifest，可添加到桌面/主屏。
+
+## 导出格式
+
+| 格式 | 扩展名 | 生成位置 | 用途 | 限制 |
+|---|---|---|---|---|
+| EPUB | `.epub` | 浏览器 | 电子书阅读器、手机/平板 | 需要阅读器支持 EPUB 3；封面固定输出 PNG |
+| HTML | `.html` | 浏览器 | 单文件离线阅读、快速分享 | 所有资源内联，封面/背景大时文件偏大；目录为页内锚点，没有独立导航文件 |
+| TXT | `.txt` | 浏览器 | 纯文本备份、再加工 | 无排版、封面、背景与图片；连续空行会折叠 |
+| PDF | `.pdf` | 服务端 | 打印、固定版式阅读 | 需登录；网页 CSS 渐变、阴影、圆角不还原；有请求体积、字数、并发与频率限制 |
+
+浏览器端生成的三个格式不出本机；PDF 需要把书稿模型提交到服务端，返回的文件不落盘，直接在内存中下载。
 
 ## 界面与操作
 
@@ -131,6 +146,47 @@ OEBPS/
 - 封面与背景都会进入 OPF manifest；背景不会进入 spine。
 - 墨水屏主题不输出任何背景图。
 - 所有文本按纯文本转义后写入 XHTML，并剔除 XML 非法控制字符。
+
+## PDF 导出（服务端）
+
+PDF 由服务端用 `pdfkit` 手动排版，前端只负责组装书稿模型、提交请求并下载结果；不使用浏览器打印，也不引入 headless Chromium。
+
+### 版式
+
+- 纸张：A4（595×842pt）或 A5（420×595pt）。
+- 页边距：标准 56pt / 窄 36pt；封面单独按 36pt 边距等比缩放居中。
+- 结构顺序与 EPUB spine 一致：封面（可选）→ 书名页（可选）→ 简介页（有简介时）→ 目录页（可选）→ 卷扉页（可选）→ 章节。
+- 页脚页码默认开启，封面不显示页码；关闭后所有页面都不绘制。
+- 目录页带真实页码：先测量排版，再回填页码。
+- 书签：按“卷 → 章”生成两级 PDF 导航书签；部分阅读器不显示书签面板。
+- 高级排版映射到 PDF：字号、行高、段距、首行缩进、对齐、颜色与标题上下留白；主题只取其字体倾向与配色。
+- 中文断行按字符宽度累加，并做标点避头尾；网页的 CSS 渐变、阴影、圆角不会进入 PDF。
+
+### 中文字体
+
+字体只从环境变量与固定候选路径解析，不接受请求参数：
+
+1. `PDF_FONT_PATH` 指定的字体文件（可配 `PDF_FONT_FAMILY`）；
+2. 当前系统的固定候选：
+   - Docker / Linux：`/usr/share/fonts/noto/NotoSerifCJK-Regular.ttc`（衬线）、`/usr/share/fonts/noto/NotoSansCJK-Regular.ttc`（无衬线）；
+   - Windows：`simsun.ttc`、`simhei.ttf`、`simkai.ttf`；
+   - macOS：`Songti.ttc`、`PingFang.ttc`。
+
+Docker 运行镜像已通过 `apk add --no-cache font-noto-cjk` 内置 Noto CJK，开箱即用。Linux 镜像通常没有楷体，楷体配置会回退到衬线字体。
+
+`PDF_FONT_PATH` 会同时覆盖衬线、无衬线、楷体三个角色。TTC / DFont 是字体集合，必须再用 `PDF_FONT_FAMILY` 指定集合内的 PostScript 名（例如宋体 `SimSun`、Noto `NotoSerifCJKsc-Regular`），否则 pdfkit 无法选中字面；普通 `.ttf` / `.otf` 单字体文件可只写路径。
+
+找不到任何可用中文字体时返回 `500` 与错误码 `PDF_FONT_MISSING`，提示安装 Noto CJK 或设置 `PDF_FONT_PATH`。成功响应带 `X-PDF-Font` 头，记录实际字族，不含字体路径。
+
+### 背景与限制
+
+- 预设的 CSS 渐变纹理（纸纹、网格、点阵、亚麻）不会进入 PDF；只有自定义背景图会以 8% 不透明度铺满每页后再绘制文字。
+- PDF 在服务端生成，需要登录；生成结果不落盘，直接在内存中返回。
+- 请求体上限 20MB（超出返回 `413` 与 `PAYLOAD_TOO_LARGE`）；章节数 ≤ 2000，单章 ≤ 200 万字符，全书 ≤ 2000 万字符，超出返回 `400`。
+- 同一时刻只允许 1 个 PDF 任务，占用期间新请求返回 `429`（`Retry-After: 5`）。
+- 单次生成 60 秒超时，超时返回 `504`。pdfkit 没有安全的取消接口，已开始的渲染不会被中断，会继续执行到结束；这期间并发位保持占用，新请求仍返回 `429`。
+- 按客户端 IP 限流 6 次 / 分钟，超出返回 `429`（`Retry-After: 60`）。
+- 大书会显著占用 CPU 与内存，Docker 部署建议限制为 1GB（见下文）。
 
 ## npm 脚本
 
@@ -270,6 +326,29 @@ docker compose run --rm -T txt2book node server-dist/scripts/hash-password.js '�
 
 4. 访问 `http://<服务器地址>:8080`，用配置的用户名与密码登录。
 
+### 容器内存建议
+
+PDF 在服务端完成排版，峰值内存随章节数与字号变化。建议给容器 1GB 上限，避免大书导出时拖垮宿主机。`docker-compose.yml` 中二选一：
+
+```yaml
+services:
+  txt2book:
+    mem_limit: 1g
+```
+
+或使用 `deploy.resources`（Swarm 模式，以及支持该字段的 Compose v2）：
+
+```yaml
+services:
+  txt2book:
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+```
+
+`mem_limit` 是容器级硬限制；不要与 `deploy.resources.limits.memory` 重复设置。低于 512MB 时，较大的书可能被 OOM kill，表现为容器重启或导出失败。
+
 常用命令：
 
 ```bash
@@ -293,9 +372,9 @@ Nginx 关键配置示例：
 
 ```nginx
 location / {
-    # 封面本地上传上限 10MB，multipart 还有少量开销；Nginx 默认只允许 1m，
-    # 不放开会在上传封面时直接返回 413。
-    client_max_body_size 12m;
+    # 封面本地上传上限 10MB，multipart 还有少量开销；PDF 导出请求体上限 20MB。
+    # Nginx 默认只允许 1m，不放开会在上传封面或导出 PDF 时直接返回 413。
+    client_max_body_size 22m;
 
     proxy_pass http://127.0.0.1:8080;
     proxy_set_header Host $host;
@@ -305,7 +384,7 @@ location / {
 }
 ```
 
-`client_max_body_size` 建议至少 `12m`；若只放在 `location` 中，对其他 location 不生效，也可以放到 `server` 或 `http` 块统一设置。
+`client_max_body_size` 建议至少 `22m`（PDF 导出请求体上限 20MB，封面 10MB）；若只放在 `location` 中，对其他 location 不生效，也可以放到 `server` 或 `http` 块统一设置。
 
 不要在 HTTPS 反代场景下保留 `COOKIE_SECURE=false`，否则会话 Cookie 可能经明文 HTTP 泄露；反之，直接 http 访问时设为 `true` 会导致浏览器不保存 Cookie、始终无法登录。
 
@@ -316,6 +395,7 @@ location / {
 - **登录认证**：单账号，密码使用 scrypt 哈希；会话 Cookie 为 HMAC-SHA256 签名的无状态令牌，`HttpOnly`、`SameSite=Strict`，可选 `Secure`；Cookie 内不含用户可修改的权限字段，签名校验使用常量时间比较。
 - **登录限流**：同一 IP 与同一用户名各 5 次 / 15 分钟，超限返回 `429` 与 `Retry-After`；用户名不存在时也执行一次 scrypt 校验，避免通过响应时间枚举账号；失败文案统一。
 - **封面接口限流**：抓取与上传共用同一个按 IP 的桶，默认 30 次 / 分钟（`RATE_LIMIT_PER_MIN`）。
+- **PDF 导出防护**：接口需要登录，请求体 20MB、章节/字数上限、并发 1、60 秒超时与 6 次 / 分钟按 IP 限流；字体路径只来自固定候选与环境变量，错误文案不泄露路径与堆栈。
 - **SSRF 防护**：封面 URL 只允许 `http` / `https`；端口只允许 80/443/8080/8443 或不低于 1024 的常规端口，并排除常见内网服务端口（6379 Redis、9200/9300 Elasticsearch、27017/27018/27019 MongoDB、11211 Memcached、2375/2376 Docker、5432 PostgreSQL、3306 MySQL 等）；拒绝本机、内网、链路本地、CGNAT、组播、保留地址与 `localhost`、`*.local`、`*.internal`、`metadata` 等域名；DNS 解析后固定 IP 连接，并在每次重定向前重新校验，防止 DNS rebinding 与重定向绕过。
 - **资源限制**：封面下载默认 10MB 上限、8 秒超时、输入不超过 4000 万像素，输出最长边缩放到 1600px；本地封面上传同为 10MB 上限。
 - **CSRF**：会话 Cookie 使用 `SameSite=Strict`；带 `Origin` 头的非 GET/HEAD/OPTIONS 请求会校验同源。
@@ -338,6 +418,8 @@ location / {
 | `COVER_TIMEOUT_MS` | `8000` | 封面下载超时（毫秒） |
 | `RATE_LIMIT_PER_MIN` | `30` | 单 IP 封面接口每分钟次数 |
 | `TRUST_PROXY` | `false` | 是否信任反向代理的 `X-Forwarded-For` / `X-Forwarded-Proto` |
+| `PDF_FONT_PATH` | 无 | 可选，PDF 中文字体文件路径；覆盖系统候选 |
+| `PDF_FONT_FAMILY` | 无 | 可选，TTC/DFont 集合内的 PostScript 名；仅在 `PDF_FONT_PATH` 指向集合文件时需要 |
 
 `PORT` 是容器内监听端口，默认 `3000`。`docker-compose.yml` 的 `8080:3000` 与 healthcheck 里的 `127.0.0.1:3000` 都固定写死 `3000`；修改 `PORT` 时必须同步修改这两处（并按需调整 Dockerfile 的 `EXPOSE`），否则浏览器访问与健康检查都会失败。
 
@@ -357,7 +439,11 @@ src/                    前端源码
     exportFileName.ts   导出文件名清洗（Windows 保留名等）
     imageDataUrl.ts     背景字节转 data URL
     render/             章节 XHTML 渲染、主题与高级排版 CSS
-    converters/         格式转换器注册表与 EPUB 实现
+    converters/         格式转换器注册表
+      epub/             EPUB 3（浏览器端）
+      html/             单文件 HTML（浏览器端）
+      txt/              整理版 TXT（浏览器端）
+      pdf/              服务端 PDF 请求组装
   styles/               CSS 变量与全局样式
   types/                前端类型
   App.vue               主界面装配
@@ -365,7 +451,8 @@ server/                 后端源码
   app.ts                Fastify 实例组装
   index.ts              启动入口（读取配置并监听）
   lib/                  配置、认证、会话、限流、SSRF、图片处理
-  routes/               认证与封面路由
+    pdf/                PDF 字体解析、断行、排版与书签
+  routes/               认证、封面与导出路由
   scripts/              密码哈希脚本
 public/                 站点图标、PWA manifest 等静态资源
 tests/                  Vitest 测试与 fixtures
@@ -386,7 +473,7 @@ npm run typecheck  # vue-tsc + tsc --noEmit
 npm run build   # 构建前端与后端
 ```
 
-测试覆盖章节解析（卷、番外、楔子、尾声混排）、章节操作与撤销、XHTML 渲染、EPUB 结构、SSRF 黑名单与重定向校验、认证与会话篡改、限流以及完整的导入导出集成流程。
+测试覆盖章节解析（卷、番外、楔子、尾声混排）、章节操作与撤销、XHTML 渲染、EPUB 结构、单文件 HTML、整理版 TXT、PDF 生成与字体回退、PDF 接口限制（未登录、超限、并发、限流）、SSRF 黑名单与重定向校验、认证与会话篡改、限流以及完整的导入导出集成流程。
 
 ## 常见问题
 
@@ -398,9 +485,9 @@ npm run build   # 构建前端与后端
 
 开发代理必须保留浏览器的 `Host`。`vite.config.ts` 已移除 `changeOrigin`，请不要改回去；否则后端 Origin 校验会认为请求跨站。生产环境由同一个服务托管前端与 API，不受影响。
 
-**上传封面或背景返回 413？**
+**上传封面或背景、导出 PDF 返回 413？**
 
-反向代理（常见是 Nginx 默认 `client_max_body_size 1m`）先于应用拒绝了请求。按「HTTPS 反向代理」示例调到 `12m` 以上。应用自身的上限是 10MB。
+反向代理（常见是 Nginx 默认 `client_max_body_size 1m`）先于应用拒绝了请求。按「HTTPS 反向代理」示例调到 `22m` 以上。应用自身的上限是封面 10MB、PDF 请求体 20MB。
 
 **登录一直失败，但用户名密码没错？**
 
@@ -418,13 +505,27 @@ npm run build   # 构建前端与后端
 
 「目录页」默认关闭。它只影响书中那一页可见目录；阅读器自带的导航目录（`nav.xhtml` / `toc.ncx`）始终存在。
 
+**导出 PDF 提示缺少中文字体？**
+
+Docker 运行镜像已内置 Noto CJK，通常不会出现。本机运行依赖系统字体：Windows 的宋体/黑体/楷体、macOS 的宋体/苹方；Linux 需安装 `fonts-noto-cjk`（Debian/Ubuntu）或 `font-noto-cjk`（Alpine）。也可以设置 `PDF_FONT_PATH`；如果指向 `.ttc` / `.dfont` 集合，还需用 `PDF_FONT_FAMILY` 指定内部 PostScript 名。
+
+**PDF 里的纸纹、网格背景不见了？**
+
+预设背景由 CSS 渐变生成，不会进入 PDF；只有自定义背景图会以 8% 不透明度铺在页面上。需要纸色质感时可改用主题底色，或上传一张自定义背景图。
+
+**导出 PDF 返回 429 或 504？**
+
+`429` 表示同一时刻已有 PDF 任务（`Retry-After: 5`）或超过 6 次 / 分钟限流（`Retry-After: 60`）；`504` 表示单次生成超过 60 秒。超时不会取消已开始的渲染：任务会继续到结束，期间并发位保持占用，因此后续请求仍可能返回 `429`。减少章节或字数、稍后重试即可；大书还会占用较多内存，建议容器限制 1GB。
+
 
 ## 已知限制
 
 - **大文件在内存中处理**：TXT 由浏览器整体读入并解析，导出时整套书模型与 ZIP 也在内存中；封面在服务端内存中解码、缩放。超大的单文件可能触发浏览器或容器内存上限，建议单本控制在数十 MB 以内。
 - **限流状态按进程保存**：限流桶存在内存中。多副本或多实例部署时每个副本独立计数，实际额度会随副本数放大；需要严格全局限流时应在反向代理层另加限流。
 - **无服务端会话吊销**：会话是无状态签名 Cookie，退出登录只清除浏览器 Cookie，服务端不维护黑名单。已签发的 Cookie 在过期前仍可使用；更换 `SESSION_SECRET` 或密码后需要让所有旧会话失效时，重启服务并更换密钥。
-- **仅实现 EPUB**：转换器注册表已预留多格式扩展，但当前只有 EPUB 可用，AZW3、MOBI、PDF 等格式尚未实现。
+- **PDF 不是网页预览的像素级复制**：PDF 由 pdfkit 重新排版，CSS 渐变纹理、阴影、圆角与复杂背景不会出现；只有自定义背景图会以 8% 不透明度叠加。目录页码与书签依赖两遍排版，超大书更慢。
+- **PDF 需要服务端资源**：服务端生成且需要登录，受 20MB 请求体、2000 章 / 2000 万字、并发 1、60 秒超时与 6 次 / 分钟限流约束；容器内存建议 1GB。
+- **未实现 AZW3 / MOBI / DOCX**：转换器注册表可扩展，但这三种格式暂未实现。
 - **封面只输出 PNG**：为保证阅读器兼容性，所有封面统一转为 PNG，超大封面会被缩放并可能增大文件体积。
 - **依赖漏洞待升级**：当前 `npm audit --omit=dev` 报告 2 high + 2 moderate。high 来自 `sharp` 及其 libvips/libheif/librsvg 依赖；moderate 来自 `@fastify/static` 传递依赖的 `minimatch`/`glob`。修复需要 breaking 升级（`sharp@0.35.5`、`@fastify/static@10`），升级后应重跑全量测试与封面 URL/上传转换验证，再更新镜像。
 - **背景图依赖阅读器**：EPUB 的 `body` 背景图在部分阅读器（尤其电纸书）会被忽略；自定义背景会统一转成 JPEG 并缩放，透明图转为 PNG。

@@ -226,7 +226,7 @@ describe("unified error handler", () => {
     }
   });
 
-  it("maps a body over Fastify's limit to a generic 413", async () => {
+  it("maps a body over Fastify's limit to 413 PAYLOAD_TOO_LARGE", async () => {
     const app = await makeApp();
     try {
       const res = await app.inject({
@@ -239,7 +239,7 @@ describe("unified error handler", () => {
       expect(res.statusCode).toBe(413);
       expect(res.headers["cache-control"]).toBe("no-store");
       expect(res.json()).toEqual({
-        error: { code: "INTERNAL", message: "服务器内部错误。" },
+        error: { code: "PAYLOAD_TOO_LARGE", message: "请求内容过大。" },
       });
     } finally {
       await app.close();

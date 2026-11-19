@@ -70,13 +70,19 @@ export function renderChapterBody(
   return parts.join("\n");
 }
 
+export interface RenderVolumeOptions {
+  /** 输出到卷扉页 section 上的 id；HTML 单文件目录用它做锚点。 */
+  id?: string;
+}
+
 /**
  * 卷扉页正文：与 EPUB 的 `volumeDocument` 保持同一结构，
  * 供连页预览按 spine 顺序插入卷标题与卷首文字。
  */
-export function renderVolumeBody(volume: Volume): string {
+export function renderVolumeBody(volume: Volume, options: RenderVolumeOptions = {}): string {
+  const id = options.id ? ` id="${escapeXml(options.id)}"` : "";
   const parts: string[] = [
-    '<section class="volume-page">',
+    `<section class="volume-page"${id}>`,
     `<h1 class="volume-title">${escapeXml(volume.title)}</h1>`,
   ];
   for (const rawLine of volume.lines ?? []) {

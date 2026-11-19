@@ -5,17 +5,67 @@ import { listConverters } from "../src/core/converters";
 import type { ConverterMeta } from "../src/core/converters/types";
 
 /** 占位格式：验证 UI 不会把未实现的转换器当成可导出选项。 */
-const PDF: ConverterMeta = {
-  id: "pdf",
-  label: "PDF",
-  extension: "pdf",
-  mimeType: "application/pdf",
+const UNAVAILABLE: ConverterMeta = {
+  id: "mobi",
+  label: "MOBI",
+  extension: "mobi",
+  mimeType: "application/x-mobipocket-ebook",
   available: false,
 };
 
+/** 带动态选项的占位格式：key 与 brief 一致，便于断言 payload。 */
+const WITH_OPTIONS: ConverterMeta = {
+  id: "b",
+  label: "B",
+  extension: "b",
+  mimeType: "x/b",
+  available: true,
+  runtime: "browser",
+  options: [
+    {
+      key: "mode",
+      label: "模式",
+      type: "select",
+      defaultValue: "x",
+      hint: "选择输出模式。",
+      choices: [
+        { value: "x", label: "X" },
+        { value: "y", label: "Y" },
+      ],
+    },
+    { key: "flag", label: "开关", type: "boolean", defaultValue: true },
+  ],
+};
+
+/** 无动态选项的占位格式，用于验证切换格式后状态不串。 */
+const WITHOUT_OPTIONS: ConverterMeta = {
+  id: "a",
+  label: "A",
+  extension: "a",
+  mimeType: "x/a",
+  available: true,
+  runtime: "browser",
+};
+
+type ExportPayload = {
+  format: string;
+  options: {
+    includeTocPage: boolean;
+    includeTitlePage: boolean;
+    includeVolumePages: boolean;
+    formatOptions?: Record<string, boolean | string>;
+  };
+};
+
+function lastPayload(wrapper: ReturnType<typeof mount>): ExportPayload {
+  const events = wrapper.emitted("export");
+  if (!events?.length) throw new Error("未触发 export 事件");
+  return events[events.length - 1][0] as ExportPayload;
+}
+
 function mountPanel(props: Record<string, unknown> = {}) {
   return mount(ExportPanel, {
-    props: { converters: [...listConverters(), PDF], ...props },
+    props: { converters: [...listConverters(), UNAVAILABLE], ...props },
   });
 }
 
@@ -26,14 +76,15 @@ describe("ExportPanel", () => {
     expect(wrapper.get('[data-test="format-epub"]').text()).toContain("EPUB");
     expect(wrapper.get('[data-test="format-epub"]').text()).toContain(".epub");
     expect(wrapper.get('[data-test="format-pdf"]').text()).toContain("PDF");
+    expect(wrapper.get('[data-test="format-pdf"]').text()).toContain(".pdf");
   });
 
   it("disables unavailable formats and marks them 即将支持", () => {
     const wrapper = mountPanel();
-    const pdf = wrapper.get('[data-test="format-pdf"]');
+    const unavailable = wrapper.get('[data-test="format-mobi"]');
 
-    expect(pdf.attributes("disabled")).toBeDefined();
-    expect(pdf.text()).toContain("即将支持");
+    expect(unavailable.attributes("disabled")).toBeDefined();
+    expect(unavailable.text()).toContain("即将支持");
     expect(wrapper.get('[data-test="format-epub"]').attributes("disabled")).toBeUndefined();
   });
 
@@ -131,6 +182,68 @@ describe("ExportPanel", () => {
 
   it("uses no inline styles", () => {
     const wrapper = mountPanel();
+
+    for (const element of wrapper.findAll("*")) {
+      expect(element.attributes("style")).toBeUndefined();
+    }
+  });
+
+  it("renders per-format options and resets on format change", async () => {
+    const converters = [WITHOUT_OPTIONS, WITH_OPTIONS];
+    const wrapper = mount(ExportPanel, { props: { converters } });
+
+    expect(wrapper.find('[data-test="format-opt-mode"]').exists()).toBe(false);
+
+    await wrapper.get('[data-test="format-b"]').trigger("click");
+    expect(wrapper.find('[data-test="format-opt-mode"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="format-opt-flag"]').exists()).toBe(true);
+
+    await wrapper.get('[data-test="format-opt-mode"]').setValue("y");
+    await wrapper.get('[data-test="format-opt-flag"]').setValue(false);
+    await wrapper.get('[data-test="export"]').trigger("click");
+
+    expect(lastPayload(wrapper).options.formatOptions).toEqual({ mode: "y", flag: false });
+  });
+
+  it("uses each format's defaults and does not leak values across formats", async () => {
+    const wrapper = mount(ExportPanel, {
+      props: { converters: [WITHOUT_OPTIONS, WITH_OPTIONS] },
+    });
+
+    await wrapper.get('[data-test="format-b"]').trigger("click");
+    await wrapper.get('[data-test="format-opt-mode"]').setValue("y");
+    await wrapper.get('[data-test="format-opt-flag"]').setValue(false);
+
+    await wrapper.get('[data-test="format-a"]').trigger("click");
+    expect(wrapper.find('[data-test="format-opt-mode"]').exists()).toBe(false);
+    await wrapper.get('[data-test="export"]').trigger("click");
+    expect(lastPayload(wrapper).options.formatOptions).toBeUndefined();
+
+    await wrapper.get('[data-test="format-b"]').trigger("click");
+    const mode = wrapper.get('[data-test="format-opt-mode"]').element as HTMLSelectElement;
+    const flag = wrapper.get('[data-test="format-opt-flag"]').element as HTMLInputElement;
+    expect(mode.value).toBe("x");
+    expect(flag.checked).toBe(true);
+  });
+
+  it("emits the selected format's default options without user edits", async () => {
+    const wrapper = mount(ExportPanel, { props: { converters: [WITH_OPTIONS] } });
+
+    await wrapper.get('[data-test="export"]').trigger("click");
+
+    expect(lastPayload(wrapper).options.formatOptions).toEqual({ mode: "x", flag: true });
+  });
+
+  it("renders option labels with hints and without inline styles", () => {
+    const wrapper = mount(ExportPanel, { props: { converters: [WITH_OPTIONS] } });
+
+    expect(wrapper.get('[data-test="format-opt-mode"]').element.closest("label")).not.toBeNull();
+    expect(wrapper.text()).toContain("模式");
+    expect(wrapper.text()).toContain("开关");
+    expect(wrapper.get('[data-test="format-opt-hint-mode"]').text()).toBe("选择输出模式。");
+    expect(
+      wrapper.get('[data-test="format-opt-mode"]').attributes("aria-describedby"),
+    ).toBe("format-opt-hint-mode");
 
     for (const element of wrapper.findAll("*")) {
       expect(element.attributes("style")).toBeUndefined();

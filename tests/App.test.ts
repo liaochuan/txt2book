@@ -523,6 +523,67 @@ describe("App", () => {
     }
   });
 
+  it("exports PDF through the server converter and names the file .pdf", async () => {
+    stubSessionApi(true);
+    const session = seedSession();
+    const converter = converterRegistry.pdf;
+    const originalConvert = converter.convert;
+    converter.convert = vi.fn(
+      async () => new Blob(["%PDF"], { type: "application/pdf" }),
+    );
+    const urls = stubObjectUrl();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    try {
+      const wrapper = mount(App, { props: { session } });
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+      );
+
+      await wrapper.get('[data-test="format-pdf"]').trigger("click");
+      await wrapper.get('[data-test="export"]').trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find(".toast-success").exists()).toBe(true));
+      expect(converter.convert).toHaveBeenCalledTimes(1);
+      expect(click).toHaveBeenCalledTimes(1);
+      expect(wrapper.get(".toast-success").text()).toContain("测试书.pdf");
+      await vi.waitFor(() => expect(urls.revokeObjectURL).toHaveBeenCalledWith("blob:mock"), {
+        timeout: 2000,
+      });
+    } finally {
+      converter.convert = originalConvert;
+      urls.restore();
+      click.mockRestore();
+    }
+  });
+
+  it("toasts a PDF export failure", async () => {
+    stubSessionApi(true);
+    const session = seedSession();
+    const converter = converterRegistry.pdf;
+    const originalConvert = converter.convert;
+    converter.convert = vi.fn(async () => {
+      throw new Error("PDF 生成失败，请稍后再试。");
+    });
+
+    try {
+      const wrapper = mount(App, { props: { session } });
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+      );
+
+      await wrapper.get('[data-test="format-pdf"]').trigger("click");
+      await wrapper.get('[data-test="export"]').trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find(".toast-error").exists()).toBe(true));
+      expect(wrapper.get(".toast-error").text()).toContain(
+        "导出失败：PDF 生成失败，请稍后再试。",
+      );
+    } finally {
+      converter.convert = originalConvert;
+    }
+  });
+
   it("disables export and hints when no chapters are loaded", async () => {
     stubSessionApi(true);
     const wrapper = mount(App, { props: { session: useBookSession() } });

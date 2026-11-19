@@ -10,6 +10,7 @@ import type { AppConfig } from "./lib/config.js";
 import { isApiPath, normalizeRequestPath } from "./lib/requestPath.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { MAX_COVER_UPLOAD_BYTES, registerCoverRoutes } from "./routes/cover.js";
+import { registerExportRoutes, type ExportRouteDeps } from "./routes/export.js";
 
 /** 前端构建产物目录；源码运行时为项目根目录下的 `dist/`。 */
 const DEFAULT_DIST_DIR = fileURLToPath(new URL("../dist/", import.meta.url));
@@ -45,6 +46,13 @@ function notFoundBody(message: string): { error: { code: string; message: string
   return { error: { code: "NOT_FOUND", message } };
 }
 
+/** Fastify bodyLimit 触发的 413：单独给出可识别的错误码，避免与 500 混淆。 */
+const PAYLOAD_TOO_LARGE_BODY = {
+  error: { code: "PAYLOAD_TOO_LARGE", message: "请求内容过大。" },
+} as const;
+
+const FASTIFY_BODY_TOO_LARGE_CODE = "FST_ERR_CTP_BODY_TOO_LARGE";
+
 /**
  * 命中 404 时是否应直接 404，而不是回退到 SPA。
  *
@@ -61,6 +69,8 @@ function isStaticAssetPath(requestedPath: string): boolean {
 export interface BuildServerOptions {
   /** 覆盖静态资源目录，仅用于测试；默认项目根目录的 `dist/`。 */
   distDir?: string;
+  /** 覆盖 PDF 导出依赖（渲染器与时钟），仅用于测试。 */
+  exportDeps?: ExportRouteDeps;
 }
 
 /**
@@ -86,6 +96,7 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   // 统一错误出口：任何未被路由捕获的错误都只返回固定中文结构。
   // 不输出框架错误消息、`error` 字段或请求数据；保留 4xx 状态码（如 400/413/415），
   // 其余错误一律视为 500，避免把内部失败包装成可区分的客户端错误。
+  // bodyLimit 触发的 413 单独映射为 PAYLOAD_TOO_LARGE，其余 4xx/5xx 行为保持不变。
   app.setErrorHandler(async (error, _request, reply) => {
     const rawStatus =
       typeof error === "object" &&
@@ -94,6 +105,21 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
       typeof (error as { statusCode?: unknown }).statusCode === "number"
         ? (error as { statusCode: number }).statusCode
         : 0;
+    const rawCode =
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      typeof (error as { code?: unknown }).code === "string"
+        ? (error as { code: string }).code
+        : "";
+
+    if (rawCode === FASTIFY_BODY_TOO_LARGE_CODE || rawStatus === 413) {
+      return reply
+        .header("cache-control", "no-store")
+        .status(413)
+        .send(PAYLOAD_TOO_LARGE_BODY);
+    }
+
     const statusCode = rawStatus >= 400 && rawStatus < 500 ? rawStatus : 500;
     return reply
       .header("cache-control", "no-store")
@@ -128,6 +154,9 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
 
   // 封面抓取/转换路由；认证与限流在守卫和路由内完成。
   void registerCoverRoutes(app, config);
+
+  // PDF 导出：认证由全局守卫覆盖，限流、并发、超时与内容上限在路由内处理。
+  void registerExportRoutes(app, config, options.exportDeps);
 
   // 前端构建产物：`wildcard: false` 只为启动时已存在的文件注册路由，
   // 不提供目录列表；未知非 API 路径由 404 处理器回退到 index.html。

@@ -29,6 +29,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server-dist ./server-dist
 
+# PDF 中文字体：Noto CJK（含 Serif / Sans 的 TTC 集合），供服务端 pdfkit 使用。
+# 字体文件固定在 /usr/share/fonts/noto/，server/lib/pdf/fonts.ts 会按该路径探测。
+RUN apk add --no-cache font-noto-cjk
+
 # 非 root 运行；node:22-alpine 自带 uid/gid 1000 的 node 用户。
 USER node
 

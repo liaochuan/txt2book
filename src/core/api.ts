@@ -1,3 +1,6 @@
+import type { BookModel, CoverAsset, ThemeId } from "../types/book";
+import type { BackgroundConfig, CustomBackground, LayoutSettings } from "./render/layout";
+
 /** 统一的接口错误：`status` 为 HTTP 状态码，网络失败时为 0。 */
 export class ApiError extends Error {
   readonly status: number;
@@ -100,6 +103,46 @@ async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
   }
 }
 
+/** 二进制字段以 base64 字符串传输，避免 `Uint8Array` 被 JSON 序列化成数字键对象。 */
+export type PdfBase64 = string;
+
+export type PdfExportCover = Omit<CoverAsset, "png"> & { png: PdfBase64 };
+
+export type PdfExportBook = Omit<BookModel, "cover"> & { cover: PdfExportCover | null };
+
+export type PdfExportBackground =
+  | Exclude<BackgroundConfig, { kind: "custom" }>
+  | {
+      kind: "custom";
+      presetId?: undefined;
+      custom: Omit<CustomBackground, "data"> & { data: PdfBase64 };
+    };
+
+export type PdfExportLayout = Omit<LayoutSettings, "background"> & {
+  background: PdfExportBackground;
+};
+
+export interface PdfExportOptions {
+  themeId: ThemeId;
+  includeTocPage: boolean;
+  includeTitlePage: boolean;
+  includeVolumePages: boolean;
+  formatOptions: Record<string, boolean | string>;
+  pageSize: "A4" | "A5";
+  margin: "normal" | "narrow";
+  pageNumbers: boolean;
+  includeCover: boolean;
+  includeToc: boolean;
+  bookmarks: boolean;
+}
+
+/** `POST /api/export/pdf` 的请求体；`layout` 只放在顶层。 */
+export interface PdfExportPayload {
+  book: PdfExportBook;
+  layout?: PdfExportLayout;
+  options: PdfExportOptions;
+}
+
 export interface CoverFileOptions {
   /** 期望的输出格式；jpeg 体积更小，服务端对透明图仍回退 PNG。默认 png。 */
   format?: "png" | "jpeg";
@@ -129,6 +172,23 @@ export const api = {
       ...(signal ? { signal } : {}),
     });
     return response.blob();
+  },
+
+  /** 调用服务端生成 PDF；请求体由 `pdfConverter` 按接口约定组装。 */
+  async exportPdf(payload: PdfExportPayload, signal?: AbortSignal): Promise<Blob> {
+    const response = await request("/api/export/pdf", {
+      ...jsonInit("POST", payload, "application/pdf"),
+      ...(signal ? { signal } : {}),
+    });
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (!contentType.includes("application/pdf")) {
+      throw new ApiError(response.status, "BAD_RESPONSE", "服务器返回的不是 PDF 文件。");
+    }
+    const blob = await response.blob();
+    if (blob.size === 0) {
+      throw new ApiError(response.status, "BAD_RESPONSE", "服务器返回了空文件。");
+    }
+    return blob;
   },
 
   async coverFromFile(file: File, options: CoverFileOptions = {}): Promise<Blob> {
