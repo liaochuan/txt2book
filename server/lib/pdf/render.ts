@@ -489,6 +489,18 @@ function labelFor(language: string | undefined, zh: string, en: string): string 
   return language === "en" ? en : zh;
 }
 
+/** 目录链接的命名目标：ASCII 且全书唯一。 */
+function destinationName(kind: "chapter" | "volume", index: number): string {
+  return `${kind}-${index}`;
+}
+
+/** 目录条目键（`v:<卷序号>` / `c:<章序号>`）→ 对应的命名目标。 */
+function destinationForTocKey(key: string): string {
+  return key.startsWith("v:")
+    ? destinationName("volume", Number(key.slice(2)))
+    : destinationName("chapter", Number(key.slice(2)));
+}
+
 function bookTitle(meta: PdfMeta): string {
   return meta.title.trim() || "未命名";
 }
@@ -529,6 +541,8 @@ interface RenderState {
   margin: number;
   pageNumbers: boolean;
   bookmarks: boolean;
+  /** 是否生成目录链接；关闭目录页时不注册目标、不加注解。 */
+  tocLinks: boolean;
   background: Buffer | null;
   pages: Map<string, number>;
   pageCount: number;
@@ -661,6 +675,22 @@ function addBookmark(
   const safeTitle = title.trim();
   if (!safeTitle) return null;
   return parent ? parent.addItem(safeTitle) : state.doc.outline.addItem(safeTitle);
+}
+
+/** 在当前页顶部注册命名目标；关闭目录页时跳过，避免产生多余的 Names 条目。 */
+function addPageDestination(
+  state: RenderState,
+  kind: "chapter" | "volume",
+  index: number,
+): void {
+  if (!state.tocLinks) return;
+  state.doc.addNamedDestination(
+    destinationName(kind, index),
+    "XYZ",
+    state.margin,
+    state.margin,
+    null,
+  );
 }
 
 /**
@@ -997,7 +1027,11 @@ function drawTocPage(
     state.doc.font(font).fontSize(fontSize).fillColor(itemStyle.color);
     // 先截断再手绘，绝不把 width + lineBreak:false 交给 pdfkit 自动换行。
     const title = fitOneLine(state.doc, entry.title, textWidth);
-    state.doc.text(title, state.margin + indent, y, { lineBreak: false });
+    // 直接把 goTo 交给 text()：注解矩形由 pdfkit 按实际排版宽度计算。
+    state.doc.text(title, state.margin + indent, y, {
+      lineBreak: false,
+      ...(state.tocLinks ? { goTo: destinationForTocKey(entry.key) } : {}),
+    });
 
     if (numberText) {
       state.doc.font("Helvetica").fontSize(fontSize).fillColor(itemStyle.color);
@@ -1018,6 +1052,7 @@ function drawVolumePage(
 ): void {
   startPage(state);
   pages.set(`v:${ordinal}`, state.pageCount);
+  addPageDestination(state, "volume", ordinal);
   state.volumeNode = addBookmark(state, volume.title, null);
   state.bookmarkVolumeId = volume.id;
 
@@ -1070,6 +1105,7 @@ function drawChapterPage(
 ): void {
   startPage(state);
   pages.set(`c:${entry.number}`, state.pageCount);
+  addPageDestination(state, "chapter", entry.number);
 
   const volumeId = entry.chapter.volumeId ?? null;
   const volume = volumeId ? volumeById.get(volumeId) : undefined;
@@ -1163,6 +1199,7 @@ function buildPdf(
     margin,
     pageNumbers: options.pageNumbers ?? true,
     bookmarks: options.bookmarks ?? true,
+    tocLinks: options.includeTocPage ?? false,
     background: images.background,
     pages: new Map(),
     pageCount: 0,

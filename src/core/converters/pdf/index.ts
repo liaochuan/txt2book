@@ -8,7 +8,13 @@ import {
 } from "../../api";
 import { bytesToBase64 } from "../../base64";
 import type { LayoutSettings } from "../../render/layout";
-import { resolveConvertOptions, type BookConverter, type ConvertOptions } from "../types";
+import {
+  resolveConvertOptions,
+  type BookConverter,
+  type ConvertHooks,
+  type ConvertOptions,
+  type ExportProgress,
+} from "../types";
 
 export type { PdfExportPayload } from "../../api";
 
@@ -79,7 +85,21 @@ function serializeLayout(layout: LayoutSettings): PdfExportLayout {
  * `pageSize` / `margin` / `pageNumbers` / `includeCover` / `bookmarks`，
  * `formatOptions` 保留原始选择便于以后扩展。`layout` 只放在顶层，避免两份配置。
  */
-export async function buildPdf(book: BookModel, options: ConvertOptions = {}): Promise<Blob> {
+export async function buildPdf(
+  book: BookModel,
+  options: ConvertOptions = {},
+  hooks?: ConvertHooks,
+): Promise<Blob> {
+  const report = (progress: ExportProgress): void => {
+    hooks?.onProgress?.(progress);
+  };
+  // 先上报再序列化：即使请求体组装失败，UI 也知道导出已进入生成阶段。
+  report({
+    phase: "generating",
+    percent: null,
+    message: "正在生成 PDF，可能需要几十秒…",
+  });
+
   const opts = resolveConvertOptions(options);
   const raw = opts.formatOptions ?? {};
 
@@ -120,7 +140,9 @@ export async function buildPdf(book: BookModel, options: ConvertOptions = {}): P
     },
   };
 
-  return api.exportPdf(payload);
+  const blob = await api.exportPdf(payload);
+  report({ phase: "downloading", percent: 100, message: "PDF 已生成，正在准备下载…" });
+  return blob;
 }
 
 export const pdfConverter: BookConverter = {

@@ -20,7 +20,7 @@ import { useThemePreference } from "./composables/useThemePreference";
 import { useToasts } from "./composables/useToasts";
 import { setUnauthorizedHandler } from "./core/api";
 import { converterRegistry, listConverters } from "./core/converters";
-import type { ConvertOptions } from "./core/converters/types";
+import type { ConvertOptions, ExportProgress } from "./core/converters/types";
 import { loadRules, type ChapterRule } from "./core/customRules";
 import { downloadBlob } from "./core/download";
 import { buildExportFileName } from "./core/exportFileName";
@@ -77,7 +77,9 @@ const {
 } = useBackgroundImage(setBackground);
 const rules = ref<ChapterRule[]>(loadRules());
 const converters = listConverters();
-const exporting = ref(false);
+/** 当前导出进度；为 null 表示没有正在进行的导出。 */
+const exportProgress = ref<ExportProgress | null>(null);
+const exporting = computed<boolean>(() => exportProgress.value !== null);
 
 /** 自定义背景在预览 iframe 中使用的 data URL；其它情况保持为空。 */
 const backgroundSrc = ref<string | undefined>(undefined);
@@ -246,21 +248,29 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
     return;
   }
 
-  exporting.value = true;
+  exportProgress.value = {
+    phase: "preparing",
+    percent: 0,
+    message: "正在准备导出…",
+  };
   try {
     const options: ConvertOptions = {
       ...request.options,
       themeId: themeId.value,
       layout: layout.value,
     };
-    const blob = await converter.convert(book.value, options);
+    const blob = await converter.convert(book.value, options, {
+      onProgress: (progress) => {
+        exportProgress.value = progress;
+      },
+    });
     const filename = exportFileName(converter.extension);
     downloadBlob(blob, filename);
     pushToast({ message: `已导出「${filename}」`, kind: "success" });
   } catch (cause) {
     pushToast({ message: errorMessage(cause), kind: "error" });
   } finally {
-    exporting.value = false;
+    exportProgress.value = null;
   }
 }
 </script>
@@ -365,6 +375,7 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
             tabindex="-1"
             :converters="converters"
             :busy="exporting"
+            :progress="exportProgress"
             :disabled="!hasBook"
             :hint="EXPORT_HINT"
             @export="onExport"

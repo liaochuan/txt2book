@@ -57,6 +57,22 @@ function makeBook(chapterCount: number, cover: Uint8Array | null = null): PdfBoo
   };
 }
 
+/** 两卷三章：用于同时验证卷扉页与章节的目录链接目标。 */
+function makeTwoVolumeBook(): PdfBook {
+  const book = makeBook(3);
+  book.volumes = [
+    ...(book.volumes ?? []),
+    {
+      id: "v2",
+      title: "第二卷 云涌",
+      kind: "volume",
+      lines: ["卷首语：风起之后，云涌而来。"],
+    },
+  ];
+  book.chapters[2].volumeId = "v2";
+  return book;
+}
+
 function fullOptions(overrides: Partial<PdfOptions> = {}): PdfOptions {
   return {
     pageSize: "A4",
@@ -184,6 +200,93 @@ function tocPageNumbers(buffer: Buffer): number[] {
     }
   }
   return numbers;
+}
+
+/** `/Pages` 的 Kids 顺序 → 1-based 页号所需的页面对象号列表。 */
+function pageObjectOrder(buffer: Buffer): number[] {
+  const text = buffer.toString("latin1");
+  const pages = /\/Type\s*\/Pages\b[\s\S]*?\/Kids\s*\[([^\]]*)\]/.exec(text);
+  if (!pages) throw new Error("没有找到 /Pages /Kids");
+  return [...pages[1].matchAll(/(\d+)\s+0\s+R/g)].map((match) => Number(match[1]));
+}
+
+/** 解析 `/Names /Dests`，返回 `chapter-N` / `volume-N` → 目标页面对象号。 */
+function destinationPageObjects(buffer: Buffer): Map<string, number> {
+  const text = buffer.toString("latin1");
+  const map = new Map<string, number>();
+  for (const match of text.matchAll(/\((chapter-\d+|volume-\d+)\)\s*\[\s*(\d+)\s+0\s+R\b/g)) {
+    map.set(match[1], Number(match[2]));
+  }
+  return map;
+}
+
+/** 页面对象号 → 1-based 页号；目标不是页面时抛错。 */
+function pageNumberOf(buffer: Buffer, objectNumber: number): number {
+  const index = pageObjectOrder(buffer).indexOf(objectNumber);
+  if (index === -1) throw new Error(`目标对象 ${objectNumber} 不是页面`);
+  return index + 1;
+}
+
+/** 解压单个间接对象的流内容；非流对象或无 FlateDecode 时回退原文。 */
+function objectStream(buffer: Buffer, objectNumber: number): string | null {
+  const text = buffer.toString("latin1");
+  const start = text.indexOf(`${objectNumber} 0 obj`);
+  if (start === -1) return null;
+  const streamStart = text.indexOf("stream", start);
+  if (streamStart === -1) return null;
+  const end = text.indexOf("endstream", streamStart);
+  if (end === -1) return null;
+
+  let dataStart = streamStart + "stream".length;
+  if (buffer[dataStart] === 0x0d) dataStart += 1;
+  if (buffer[dataStart] === 0x0a) dataStart += 1;
+  const raw = buffer.subarray(dataStart, end);
+  try {
+    return inflateSync(raw).toString("latin1");
+  } catch {
+    return raw.toString("latin1");
+  }
+}
+
+/**
+ * 目录页（带 `/Annots` 的页面）右侧栏打印的页码，按目录行顺序返回。
+ * 页码列固定由 pdfkit 用 Helvetica（`/F1`）绘制，且 x 超过版心右半侧。
+ */
+function tocPrintedPageNumbers(buffer: Buffer): number[] {
+  const pageWidth = firstMediaBox(buffer).width;
+  const order = pageObjectOrder(buffer);
+  const pageBodies = new Map<number, string>();
+  for (const match of buffer
+    .toString("latin1")
+    .matchAll(/(\d+)\s+0\s+obj\b([\s\S]*?)endobj/g)) {
+    if (/\/Type\s*\/Page(?![s])/.test(match[2])) {
+      pageBodies.set(Number(match[1]), match[2]);
+    }
+  }
+
+  const numbers: number[] = [];
+  for (const objectNumber of order) {
+    const body = pageBodies.get(objectNumber);
+    if (!body || !body.includes("/Annots")) continue;
+    const contents = /\/Contents\s+(\d+)\s+0\s+R/.exec(body);
+    if (!contents) continue;
+    const stream = objectStream(buffer, Number(contents[1]));
+    if (!stream) continue;
+
+    for (const match of stream.matchAll(
+      /1 0 0 1 ([\d.]+) [\d.]+ Tm\s*\/\w+ [\d.]+ Tf\s*\[<([0-9a-fA-F]+)> 0\] TJ/g,
+    )) {
+      const x = Number(match[1]);
+      const value = Buffer.from(match[2], "hex").toString("latin1");
+      if (x > pageWidth * 0.6 && /^\d+$/.test(value)) numbers.push(Number(value));
+    }
+  }
+  return numbers;
+}
+
+/** 目录链接数量的期望值：每个规划块（卷扉页/章节）对应一行目录。 */
+function expectedTocLinkCount(book: PdfBook, includeVolumePages: boolean): number {
+  return planPdfBlocks(book, includeVolumePages).length;
 }
 
 describe("resolvePdfFonts", () => {
@@ -495,6 +598,109 @@ describe("renderPdf", () => {
         expect(page).toBeGreaterThanOrEqual(1);
         expect(page).toBeLessThanOrEqual(result.pageCount);
       }
+    });
+
+    it("makes toc entries clickable via chapter and volume destinations", async () => {
+      const book = makeBook(3);
+      const result = await renderPdf(
+        book,
+        fullOptions({ includeCover: false, includeVolumePages: true }),
+      );
+      const pdf = result.buffer.toString("latin1");
+
+      expect(pdf).toContain("/Annots");
+      expect(pdf).toContain("/S /GoTo");
+      expect(pdf).toContain("/D (chapter-1)");
+      expect(pdf).toContain("/D (volume-1)");
+
+      // 精确数量：每章 + 每个有扉页的卷各一条链接。
+      const links = pdf.match(/\/S \/GoTo/g)?.length ?? 0;
+      expect(links).toBe(expectedTocLinkCount(book, true));
+    });
+
+    it("points each toc link at the page printed in the toc", async () => {
+      const book = makeTwoVolumeBook();
+      const result = await renderPdf(
+        book,
+        fullOptions({ includeCover: false, includeVolumePages: true }),
+      );
+      const pdf = result.buffer.toString("latin1");
+      const destinations = destinationPageObjects(result.buffer);
+      const printed = tocPrintedPageNumbers(result.buffer);
+      const expectedLinks = expectedTocLinkCount(book, true);
+
+      expect(pdf.match(/\/S \/GoTo/g)?.length ?? 0).toBe(expectedLinks);
+      expect(printed).toHaveLength(expectedLinks);
+      expect([...destinations.keys()].sort()).toEqual([
+        "chapter-1",
+        "chapter-2",
+        "chapter-3",
+        "volume-1",
+        "volume-2",
+      ]);
+      for (const page of printed) {
+        expect(page).toBeGreaterThanOrEqual(1);
+        expect(page).toBeLessThanOrEqual(result.pageCount);
+      }
+
+      const targetPage = (name: string): number => {
+        const objectNumber = destinations.get(name);
+        if (objectNumber === undefined) throw new Error(`缺少目标 ${name}`);
+        return pageNumberOf(result.buffer, objectNumber);
+      };
+
+      // 目录行顺序：卷 1、第 1 章、第 2 章、卷 2、第 3 章。
+      expect(targetPage("volume-1")).toBe(printed[0]);
+      expect(targetPage("chapter-1")).toBe(printed[1]);
+      expect(targetPage("chapter-2")).toBe(printed[2]);
+      expect(targetPage("volume-2")).toBe(printed[3]);
+      expect(targetPage("chapter-3")).toBe(printed[4]);
+    });
+
+    it("degrades volume toc links to the carrier chapter when volume pages are off", async () => {
+      const book = makeTwoVolumeBook();
+      const result = await renderPdf(
+        book,
+        fullOptions({ includeCover: false, includeVolumePages: false }),
+      );
+      const pdf = result.buffer.toString("latin1");
+      const destinations = destinationPageObjects(result.buffer);
+      const printed = tocPrintedPageNumbers(result.buffer);
+      const expectedLinks = expectedTocLinkCount(book, false);
+
+      // 卷扉页关闭后卷行仍在，只是降级指向承载章节，链接总数不变。
+      expect(pdf.match(/\/S \/GoTo/g)?.length ?? 0).toBe(expectedLinks);
+      expect(printed).toHaveLength(expectedLinks);
+      expect([...destinations.keys()].sort()).toEqual([
+        "chapter-1",
+        "chapter-2",
+        "chapter-3",
+      ]);
+
+      const targetPage = (name: string): number => {
+        const objectNumber = destinations.get(name);
+        if (objectNumber === undefined) throw new Error(`缺少目标 ${name}`);
+        return pageNumberOf(result.buffer, objectNumber);
+      };
+
+      // 目录行顺序：卷 1、第 1 章、第 2 章、卷 2、第 3 章。
+      expect(printed[0]).toBe(printed[1]);
+      expect(printed[3]).toBe(printed[4]);
+      expect(targetPage("chapter-1")).toBe(printed[1]);
+      expect(targetPage("chapter-2")).toBe(printed[2]);
+      expect(targetPage("chapter-3")).toBe(printed[4]);
+    });
+
+    it("does not add toc links when includeTocPage is false", async () => {
+      const result = await renderPdf(
+        makeBook(3),
+        fullOptions({ includeCover: false, includeTocPage: false }),
+      );
+      const pdf = result.buffer.toString("latin1");
+
+      expect(pdf).not.toContain("/S /GoTo");
+      // 同时不应留下任何 chapter-N / volume-N 命名目标。
+      expect(pdf).not.toMatch(/\((chapter|volume)-\d+\)/);
     });
 
     it("reports the actual role after a broken font falls back", async () => {

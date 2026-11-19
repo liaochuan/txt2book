@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { listConverters } from "../core/converters";
-import type { ConverterMeta, ConvertOptions, FormatOption } from "../core/converters/types";
+import type {
+  ConverterMeta,
+  ConvertOptions,
+  ExportProgress,
+  FormatOption,
+} from "../core/converters/types";
 
 const props = withDefaults(
   defineProps<{
@@ -9,6 +14,8 @@ const props = withDefaults(
     converters?: ConverterMeta[];
     /** 导出进行中：禁用按钮并显示加载文案。 */
     busy?: boolean;
+    /** 当前导出进度；`busy` 时显示在按钮下方。 */
+    progress?: ExportProgress | null;
     /** 没有可导出的章节时由父级禁用。 */
     disabled?: boolean;
     /** 禁用原因；为空时使用默认提示。 */
@@ -17,6 +24,7 @@ const props = withDefaults(
   {
     converters: () => listConverters(),
     busy: false,
+    progress: null,
     disabled: false,
     hint: "",
   },
@@ -105,6 +113,31 @@ function submit(): void {
   if (!canExport.value) return;
   emit("export", { format: format.value, options: options() });
 }
+
+/** 已用时间按秒累加；仅在 busy 期间计时，结束后立即清理。 */
+const elapsedSeconds = ref(0);
+let elapsedTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopElapsedTimer(): void {
+  if (elapsedTimer === null) return;
+  clearInterval(elapsedTimer);
+  elapsedTimer = null;
+}
+
+watch(
+  () => props.busy,
+  (busy) => {
+    stopElapsedTimer();
+    elapsedSeconds.value = 0;
+    if (!busy) return;
+    elapsedTimer = setInterval(() => {
+      elapsedSeconds.value += 1;
+    }, 1000);
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(stopElapsedTimer);
 </script>
 
 <template>
@@ -247,5 +280,34 @@ function submit(): void {
       <span v-if="busy" class="loading">正在生成 {{ selected ? selected.label : "" }}</span>
       <span v-else>导出 {{ selected ? selected.label : "" }}</span>
     </button>
+
+    <div
+      v-if="busy"
+      class="export-progress"
+      data-test="export-progress"
+    >
+      <progress
+        class="export-progress-bar"
+        max="100"
+        aria-label="导出进度"
+        :value="progress?.percent ?? undefined"
+      ></progress>
+      <div class="export-progress-text">
+        <span
+          class="export-progress-message"
+          data-test="export-progress-message"
+          aria-live="polite"
+        >
+          {{ progress?.message ?? "正在导出…" }}
+        </span>
+        <span
+          class="export-progress-elapsed"
+          data-test="export-progress-elapsed"
+          aria-hidden="true"
+        >
+          已用 {{ elapsedSeconds }}s
+        </span>
+      </div>
+    </div>
   </section>
 </template>

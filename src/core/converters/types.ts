@@ -51,8 +51,24 @@ export interface ConverterMeta {
   options?: FormatOption[];
 }
 
+/** 导出阶段：准备内容、生成文件、收尾写盘、等待下载。 */
+export type ExportPhase = "preparing" | "generating" | "writing" | "downloading";
+
+/** 一次导出进度；`percent` 为 null 表示无法确定进度。 */
+export interface ExportProgress {
+  phase: ExportPhase;
+  /** 0–100；null 表示不确定进度。 */
+  percent: number | null;
+  message: string;
+}
+
+/** 转换器在关键阶段调用的进度回调；未提供时转换器不调用。 */
+export interface ConvertHooks {
+  onProgress?: (progress: ExportProgress) => void;
+}
+
 export interface BookConverter extends ConverterMeta {
-  convert(book: BookModel, options?: ConvertOptions): Promise<Blob>;
+  convert(book: BookModel, options?: ConvertOptions, hooks?: ConvertHooks): Promise<Blob>;
 }
 
 /** `resolveConvertOptions` 补齐的字段；`layout` 留给转换器按主题决定默认值。 */

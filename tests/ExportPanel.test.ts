@@ -1,5 +1,5 @@
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import ExportPanel from "../src/components/ExportPanel.vue";
 import { listConverters } from "../src/core/converters";
 import type { ConverterMeta } from "../src/core/converters/types";
@@ -244,6 +244,122 @@ describe("ExportPanel", () => {
     expect(
       wrapper.get('[data-test="format-opt-mode"]').attributes("aria-describedby"),
     ).toBe("format-opt-hint-mode");
+
+    for (const element of wrapper.findAll("*")) {
+      expect(element.attributes("style")).toBeUndefined();
+    }
+  });
+
+  it("shows the numeric percent on a native progress bar while busy", () => {
+    const wrapper = mountPanel({
+      busy: true,
+      progress: { phase: "generating", percent: 40, message: "正在打包 EPUB 40%" },
+    });
+
+    const container = wrapper.get('[data-test="export-progress"]');
+    expect(container.attributes("aria-live")).toBeUndefined();
+    expect(container.get("progress").attributes("aria-label")).toBe("导出进度");
+    expect(container.get("progress").attributes("value")).toBe("40");
+    expect(wrapper.get('[data-test="export-progress-message"]').attributes("aria-live")).toBe(
+      "polite",
+    );
+    expect(wrapper.get('[data-test="export-progress-message"]').text()).toBe(
+      "正在打包 EPUB 40%",
+    );
+    expect(wrapper.get('[data-test="export-progress-elapsed"]').attributes("aria-hidden")).toBe(
+      "true",
+    );
+  });
+
+  it("renders value 0 for a zero percent progress", () => {
+    const wrapper = mountPanel({
+      busy: true,
+      progress: { phase: "preparing", percent: 0, message: "正在准备导出…" },
+    });
+
+    expect(wrapper.get('[data-test="export-progress"] progress').attributes("value")).toBe("0");
+  });
+
+  it("omits the value attribute for indeterminate progress", () => {
+    const wrapper = mountPanel({
+      busy: true,
+      progress: { phase: "generating", percent: null, message: "正在生成 PDF…" },
+    });
+
+    expect(wrapper.get('[data-test="export-progress"] progress').attributes("value")).toBeUndefined();
+  });
+
+  it("updates the message and elapsed seconds with fake timers", async () => {
+    vi.useFakeTimers();
+    const wrapper = mountPanel({
+      busy: true,
+      progress: { phase: "preparing", percent: 0, message: "正在准备导出…" },
+    });
+
+    try {
+      expect(wrapper.get('[data-test="export-progress-elapsed"]').text()).toBe("已用 0s");
+
+      await vi.advanceTimersByTimeAsync(2000);
+      await wrapper.vm.$nextTick();
+      expect(wrapper.get('[data-test="export-progress-elapsed"]').text()).toBe("已用 2s");
+
+      await wrapper.setProps({
+        progress: { phase: "generating", percent: 60, message: "正在打包 EPUB 60%" },
+      });
+      expect(wrapper.get('[data-test="export-progress-message"]').text()).toBe(
+        "正在打包 EPUB 60%",
+      );
+      expect(wrapper.get('[data-test="export-progress"] progress').attributes("value")).toBe("60");
+    } finally {
+      wrapper.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("removes the progress bar and stops the timer when busy turns false", async () => {
+    vi.useFakeTimers();
+    const wrapper = mountPanel({
+      busy: true,
+      progress: { phase: "generating", percent: 40, message: "正在打包 EPUB 40%" },
+    });
+
+    try {
+      expect(wrapper.find('[data-test="export-progress"]').exists()).toBe(true);
+      expect(vi.getTimerCount()).toBe(1);
+
+      await wrapper.setProps({ busy: false });
+
+      expect(wrapper.find('[data-test="export-progress"]').exists()).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      wrapper.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears the elapsed timer on unmount", () => {
+    vi.useFakeTimers();
+    const wrapper = mountPanel({
+      busy: true,
+      progress: { phase: "generating", percent: 40, message: "正在打包 EPUB 40%" },
+    });
+
+    try {
+      expect(vi.getTimerCount()).toBe(1);
+
+      wrapper.unmount();
+
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders the busy progress without inline styles", () => {
+    const wrapper = mountPanel({
+      busy: true,
+      progress: { phase: "generating", percent: 40, message: "正在打包 EPUB 40%" },
+    });
 
     for (const element of wrapper.findAll("*")) {
       expect(element.attributes("style")).toBeUndefined();

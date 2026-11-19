@@ -1,5 +1,11 @@
 import type { BookModel, Chapter, Volume } from "../../../types/book";
-import { resolveConvertOptions, type BookConverter, type ConvertOptions } from "../types";
+import {
+  resolveConvertOptions,
+  type BookConverter,
+  type ConvertHooks,
+  type ConvertOptions,
+  type ExportProgress,
+} from "../types";
 
 /** 默认输出简介：TXT 里“简介”章是正文的一部分。 */
 const DEFAULT_INCLUDE_INTRO = true;
@@ -77,7 +83,16 @@ function descriptionBlock(description: string): string[] {
  * 生成整理版 TXT：UTF-8 无 BOM，`\n` 换行，卷/章标题独占一行，
  * 正文行保留原文、去掉行尾空白，连续空行折叠为最多一个。
  */
-export async function buildTxt(book: BookModel, options: ConvertOptions = {}): Promise<Blob> {
+export async function buildTxt(
+  book: BookModel,
+  options: ConvertOptions = {},
+  hooks?: ConvertHooks,
+): Promise<Blob> {
+  const report = (progress: ExportProgress): void => {
+    hooks?.onProgress?.(progress);
+  };
+  report({ phase: "preparing", percent: 10, message: "正在准备 TXT 内容…" });
+
   const opts = resolveConvertOptions(options);
   const includeIntro = readBoolean(opts.formatOptions, "includeIntro", DEFAULT_INCLUDE_INTRO);
   const includeVolumeTitles = readBoolean(
@@ -165,9 +180,12 @@ export async function buildTxt(book: BookModel, options: ConvertOptions = {}): P
     pushBlock(output, chapterBlock(chapter));
   }
 
+  report({ phase: "writing", percent: 80, message: "正在生成 TXT 文件…" });
+
   const text = `${output.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "")}\n`;
 
   // Blob 直接由字符串构造：浏览器与 Node 都按 UTF-8 编码，不加 BOM。
+  report({ phase: "writing", percent: 100, message: "正在准备下载…" });
   return new Blob([text], { type: "text/plain;charset=utf-8" });
 }
 

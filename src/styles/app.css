@@ -1368,6 +1368,111 @@ select {
   width: 100%;
 }
 
+/* 导出进度：原生 <progress> 按主题色绘制轨道与填充；无 value 时显示不确定条纹。 */
+.export-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.export-progress-bar {
+  display: block;
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--bg);
+  accent-color: var(--primary);
+}
+
+.export-progress-bar::-webkit-progress-bar {
+  border-radius: 999px;
+  background: var(--bg);
+}
+
+.export-progress-bar::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--primary);
+  transition: width 0.2s ease;
+}
+
+.export-progress-bar::-moz-progress-bar {
+  border-radius: 999px;
+  background: var(--primary);
+}
+
+/* 不确定进度：两个浏览器引擎分别给轨道铺条纹，整体缓慢滑动。 */
+.export-progress-bar:indeterminate {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--primary-soft) 0,
+    var(--primary-soft) 8px,
+    transparent 8px,
+    transparent 16px
+  );
+  background-size: 200% 100%;
+  animation: export-progress-stripes 1s linear infinite;
+}
+
+.export-progress-bar:indeterminate::-webkit-progress-bar {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--primary-soft) 0,
+    var(--primary-soft) 8px,
+    transparent 8px,
+    transparent 16px
+  );
+  background-size: 200% 100%;
+  animation: export-progress-stripes 1s linear infinite;
+}
+
+.export-progress-bar:indeterminate::-moz-progress-bar {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--primary-soft) 0,
+    var(--primary-soft) 8px,
+    transparent 8px,
+    transparent 16px
+  );
+  background-size: 200% 100%;
+  animation: export-progress-stripes 1s linear infinite;
+}
+
+@keyframes export-progress-stripes {
+  to {
+    background-position: 32px 0;
+  }
+}
+
+.export-progress-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.export-progress-elapsed {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .export-progress-bar,
+  .export-progress-bar::-webkit-progress-bar,
+  .export-progress-bar::-webkit-progress-value,
+  .export-progress-bar::-moz-progress-bar,
+  .export-progress-bar:indeterminate,
+  .export-progress-bar:indeterminate::-webkit-progress-bar,
+  .export-progress-bar:indeterminate::-moz-progress-bar {
+    animation: none;
+    transition: none;
+  }
+}
+
 /* 自定义规则面板 */
 .rules-panel {
   display: flex;

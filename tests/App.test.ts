@@ -5,7 +5,7 @@ import ChapterTree from "../src/components/ChapterTree.vue";
 import { useAuth } from "../src/composables/useAuth";
 import { useBookSession } from "../src/composables/useBookSession";
 import { converterRegistry } from "../src/core/converters";
-import type { ConvertOptions } from "../src/core/converters/types";
+import type { ConvertHooks, ConvertOptions } from "../src/core/converters/types";
 import { defaultLayoutFor } from "../src/core/render/layout";
 import type { BookModel, ThemeId } from "../src/types/book";
 
@@ -579,6 +579,96 @@ describe("App", () => {
       expect(wrapper.get(".toast-error").text()).toContain(
         "导出失败：PDF 生成失败，请稍后再试。",
       );
+    } finally {
+      converter.convert = originalConvert;
+    }
+  });
+
+  it("shows export progress while pending and clears it after success", async () => {
+    stubSessionApi(true);
+    const session = seedSession();
+    const converter = converterRegistry.epub;
+    const originalConvert = converter.convert;
+    let emitProgress: ConvertHooks["onProgress"];
+    let release: ((blob: Blob) => void) | undefined;
+    converter.convert = vi.fn(
+      (
+        _book: BookModel,
+        _options?: ConvertOptions,
+        hooks?: ConvertHooks,
+      ): Promise<Blob> => {
+        emitProgress = hooks?.onProgress;
+        return new Promise<Blob>((resolve) => {
+          release = resolve;
+        });
+      },
+    );
+
+    const urls = stubObjectUrl();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    try {
+      const wrapper = mount(App, { props: { session } });
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+      );
+
+      await wrapper.get('[data-test="export"]').trigger("click");
+      await wrapper.vm.$nextTick();
+
+      expect(wrapper.find('[data-test="export-progress"]').exists()).toBe(true);
+      expect(wrapper.get('[data-test="export-progress-message"]').text()).toContain(
+        "正在准备导出",
+      );
+
+      emitProgress?.({ phase: "generating", percent: 40, message: "正在打包 EPUB 40%" });
+      await wrapper.vm.$nextTick();
+
+      expect(wrapper.get('[data-test="export-progress"] progress').attributes("value")).toBe(
+        "40",
+      );
+      expect(wrapper.get('[data-test="export-progress-message"]').text()).toBe(
+        "正在打包 EPUB 40%",
+      );
+
+      release?.(new Blob(["zip"], { type: "application/epub+zip" }));
+
+      await vi.waitFor(() => expect(wrapper.find(".toast-success").exists()).toBe(true));
+      expect(wrapper.find('[data-test="export-progress"]').exists()).toBe(false);
+      expect(wrapper.get('[data-test="export"]').attributes("disabled")).toBeUndefined();
+
+      await vi.waitFor(() => expect(urls.revokeObjectURL).toHaveBeenCalledWith("blob:mock"), {
+        timeout: 2000,
+      });
+    } finally {
+      converter.convert = originalConvert;
+      urls.restore();
+      click.mockRestore();
+    }
+  });
+
+  it("clears export progress after a failed conversion", async () => {
+    stubSessionApi(true);
+    const session = seedSession();
+    const converter = converterRegistry.epub;
+    const originalConvert = converter.convert;
+    converter.convert = vi.fn(async () => {
+      throw new Error("打包失败");
+    });
+
+    try {
+      const wrapper = mount(App, { props: { session } });
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+      );
+
+      await wrapper.get('[data-test="export"]').trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find(".toast-error").exists()).toBe(true));
+      expect(wrapper.get(".toast-error").text()).toContain("导出失败：打包失败");
+      expect(wrapper.find('[data-test="export-progress"]').exists()).toBe(false);
+      expect(wrapper.get('[data-test="export"]').attributes("disabled")).toBeUndefined();
+      expect(wrapper.get('[data-test="export"]').text()).toContain("导出 EPUB");
     } finally {
       converter.convert = originalConvert;
     }

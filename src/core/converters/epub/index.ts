@@ -2,7 +2,13 @@ import JSZip from "jszip";
 import type { BookModel, Chapter, Volume } from "../../../types/book";
 import { defaultLayoutFor, layoutCss, normalizeLayout } from "../../render/layout";
 import { themes } from "../../render/themes";
-import { resolveConvertOptions, type BookConverter, type ConvertOptions } from "../types";
+import {
+  resolveConvertOptions,
+  type BookConverter,
+  type ConvertHooks,
+  type ConvertOptions,
+  type ExportProgress,
+} from "../types";
 import { buildOpf, containerXml, NCX_MEDIA_TYPE, type OpfManifestItem, type OpfSpineItem } from "./opf";
 import {
   chapterDocument,
@@ -62,7 +68,16 @@ function isoTimestamp(date: Date): string {
  *   OEBPS/cover.xhtml / titlepage.xhtml / description.xhtml / volume-N.xhtml
  *   OEBPS/text/chapter-N.xhtml
  */
-export async function buildEpub(book: BookModel, options: ConvertOptions = {}): Promise<Blob> {
+export async function buildEpub(
+  book: BookModel,
+  options: ConvertOptions = {},
+  hooks?: ConvertHooks,
+): Promise<Blob> {
+  const report = (progress: ExportProgress): void => {
+    hooks?.onProgress?.(progress);
+  };
+  report({ phase: "preparing", percent: 0, message: "正在准备 EPUB 内容…" });
+
   const opts = resolveConvertOptions(options);
   const theme = themes[opts.themeId];
   const meta = book.meta;
@@ -313,11 +328,22 @@ export async function buildEpub(book: BookModel, options: ConvertOptions = {}): 
     }),
   );
 
-  const data = await zip.generateAsync({
-    type: "arraybuffer",
-    mimeType: "application/epub+zip",
-    compression: "DEFLATE",
-  });
+  // JSZip 的 `metadata.percent` 是压缩打包的总体百分比；夹紧到 0–100 并保证单调，
+  // 避免不同 JSZip 版本偶发的回退让进度条倒退。
+  let lastPercent = 0;
+  const data = await zip.generateAsync(
+    {
+      type: "arraybuffer",
+      mimeType: "application/epub+zip",
+      compression: "DEFLATE",
+    },
+    (metadata) => {
+      const percent = Math.min(100, Math.max(lastPercent, Math.round(metadata.percent)));
+      lastPercent = percent;
+      report({ phase: "generating", percent, message: `正在打包 EPUB ${percent}%` });
+    },
+  );
+  report({ phase: "writing", percent: 100, message: "正在准备下载…" });
   return new Blob([data], { type: "application/epub+zip" });
 }
 

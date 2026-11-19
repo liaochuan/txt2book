@@ -69,7 +69,9 @@ describe("buildHtml", () => {
     ).text();
 
     expect(text).toContain("&lt;script&gt;");
-    expect(text).not.toContain("<script>");
+    // 只允许生成器自己的内联侧栏脚本；书名/正文里的 script 必须保持转义文本。
+    expect(text.match(/<script/gi) ?? []).toHaveLength(1);
+    expect(text).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(text).not.toContain('class="title-page"');
     expect(text).not.toContain('class="toc-page"');
     expect(text).not.toContain('class="volume-page"');
