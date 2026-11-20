@@ -323,7 +323,7 @@ select {
   position: fixed;
   left: 50%;
   bottom: var(--space-5);
-  z-index: 20;
+  z-index: 40;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -2194,5 +2194,276 @@ details[open] > summary .disclosure-caret {
   .panel-details > .panel-summary,
   .type-group > .type-group-summary {
     min-height: 32px;
+  }
+}
+
+/* Calibre-Web 弹窗内容 */
+.calibre-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.calibre-session {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.calibre-session-line {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+  word-break: break-all;
+}
+
+.calibre-session-label {
+  flex: none;
+  min-width: 3em;
+  color: var(--muted);
+}
+
+.calibre-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.calibre-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+}
+
+.calibre-search {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.calibre-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.calibre-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.calibre-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 4px);
+  background: var(--surface);
+}
+
+.calibre-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.calibre-row-title {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.calibre-row-author {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.calibre-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.calibre-badge {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.calibre-linked,
+.calibre-no-txt {
+  align-self: flex-start;
+  font-size: 12px;
+}
+
+.calibre-linked {
+  color: var(--primary);
+}
+
+.calibre-no-txt {
+  color: var(--muted);
+}
+
+.calibre-empty {
+  padding: var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.calibre-error {
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.calibre-notice {
+  color: var(--primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.calibre-load-more {
+  align-self: flex-start;
+}
+
+.calibre-linked-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 13px;
+}
+
+.calibre-linked-book {
+  color: var(--text);
+}
+
+/* 通用弹窗：遮罩 + 面板 */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(16, 24, 40, 0.45);
+  overflow-y: auto;
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(560px, 100%);
+  max-height: min(85vh, 900px);
+  overflow-y: auto;
+  padding: var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.dialog:focus {
+  outline: none;
+}
+
+.dialog-wide {
+  width: min(880px, 100%);
+}
+
+.dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.dialog-title {
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.dialog-close {
+  flex: none;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: calc(var(--radius) - 4px);
+  background: transparent;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dialog-close:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.dialog-close:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* 设置弹窗与书库弹窗的内容容器 */
+.calibre-settings,
+.calibre-library {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* 推送模式下拉框在标签内保持自然宽度 */
+.export-push-mode {
+  cursor: default;
+}
+
+.export-push-mode .export-select {
+  min-width: 150px;
+}
+
+@media (max-width: 600px) {
+  .dialog-backdrop {
+    padding: var(--space-2);
+  }
+
+  .dialog {
+    max-height: 92vh;
+    padding: var(--space-4);
+  }
+
+  .dialog-title {
+    font-size: 16px;
   }
 }

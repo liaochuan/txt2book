@@ -1,4 +1,5 @@
 import type { BookModel, CoverAsset, ThemeId } from "../types/book";
+import type { CalibreSessionInfo } from "../types/calibre";
 import type { BackgroundConfig, CustomBackground, LayoutSettings } from "./render/layout";
 
 /** 统一的接口错误：`status` 为 HTTP 状态码，网络失败时为 0。 */
@@ -204,5 +205,92 @@ export const api = {
       ...(options.signal ? { signal: options.signal } : {}),
     });
     return response.blob();
+  },
+
+  async calibreStatus(): Promise<CalibreSessionInfo> {
+    return requestJson<CalibreSessionInfo>("/api/calibre/session", {
+      headers: { accept: "application/json" },
+    });
+  },
+
+  async calibreConnect(input: {
+    baseUrl: string;
+    username: string;
+    password: string;
+  }): Promise<CalibreSessionInfo> {
+    return requestJson<CalibreSessionInfo>(
+      "/api/calibre/session",
+      jsonInit("POST", {
+        baseUrl: input.baseUrl,
+        username: input.username,
+        password: input.password,
+      }),
+    );
+  },
+
+  async calibreReconnect(): Promise<CalibreSessionInfo> {
+    return requestJson<CalibreSessionInfo>("/api/calibre/session/reconnect", {
+      method: "POST",
+      headers: { accept: "application/json" },
+    });
+  },
+
+  async calibreDisconnect(): Promise<void> {
+    await request("/api/calibre/session", { method: "DELETE" });
+  },
+
+  async calibreForget(): Promise<void> {
+    await request("/api/calibre/credentials", { method: "DELETE" });
+  },
+
+  /** 原样返回服务端代理的 OPDS/Atom XML。 */
+  async calibreFeed(input: { offset?: number; q?: string; format?: string }): Promise<string> {
+    const params = new URLSearchParams();
+    if (input.offset !== undefined) params.set("offset", String(input.offset));
+    if (input.q) params.set("q", input.q);
+    if (input.format) params.set("format", input.format);
+    const query = params.toString();
+    const path = query === "" ? "/api/calibre/feed" : `/api/calibre/feed?${query}`;
+    const response = await request(path, {
+      headers: { accept: "application/atom+xml" },
+    });
+    return response.text();
+  },
+
+  async calibreTextFile(id: number): Promise<Blob> {
+    const response = await request(`/api/calibre/books/${id}/file`, {
+      headers: { accept: "application/octet-stream" },
+    });
+    return response.blob();
+  },
+
+  /** 服务端只返回转换后的 PNG；其他类型说明上游返回了异常内容。 */
+  async calibreCover(id: number): Promise<Blob> {
+    const response = await request(`/api/calibre/books/${id}/cover`, {
+      headers: { accept: "image/png" },
+    });
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (!contentType.includes("image/png")) {
+      throw new ApiError(response.status, "BAD_RESPONSE", "服务器返回的不是 PNG 图片。");
+    }
+    const blob = await response.blob();
+    if (blob.size === 0) {
+      throw new ApiError(response.status, "BAD_RESPONSE", "服务器返回了空文件。");
+    }
+    return blob;
+  },
+
+  async calibrePush(id: number, blob: Blob, filename: string, overwrite: boolean): Promise<void> {
+    const query = overwrite ? "?overwrite=true" : "";
+    // 先包成 File：服务端按 multipart 的文件名校验 `.epub`，而部分 FormData
+    // 实现（如 happy-dom）会忽略 append 的第三个参数，只保留 `File.name`。
+    const file = new File([blob], filename, { type: blob.type });
+    const form = new FormData();
+    form.append("file", file);
+    await request(`/api/calibre/books/${id}/epub${query}`, {
+      method: "POST",
+      headers: { accept: "application/json" },
+      body: form,
+    });
   },
 };

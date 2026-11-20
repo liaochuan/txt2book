@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import BookMetaPanel from "./components/BookMetaPanel.vue";
 import BackgroundPanel from "./components/BackgroundPanel.vue";
+import CalibreLibraryDialog from "./components/CalibreLibraryDialog.vue";
+import CalibreSettingsDialog from "./components/CalibreSettingsDialog.vue";
 import ChapterTree from "./components/ChapterTree.vue";
 import CoverPanel from "./components/CoverPanel.vue";
 import CustomRulesPanel from "./components/CustomRulesPanel.vue";
@@ -15,6 +17,9 @@ import UploadPanel from "./components/UploadPanel.vue";
 import { useAuth } from "./composables/useAuth";
 import { useBackgroundImage } from "./composables/useBackgroundImage";
 import { useBookSession, type BookSession } from "./composables/useBookSession";
+import { useCalibre } from "./composables/useCalibre";
+import { useCover } from "./composables/useCover";
+import { useImport } from "./composables/useImport";
 import { useLayoutSettings } from "./composables/useLayoutSettings";
 import { useThemePreference } from "./composables/useThemePreference";
 import { useToasts } from "./composables/useToasts";
@@ -26,6 +31,7 @@ import { downloadBlob } from "./core/download";
 import { buildExportFileName } from "./core/exportFileName";
 import { bytesToDataUrl } from "./core/imageDataUrl";
 import type { BackgroundPresetId, ElementKey, ElementStyle } from "./core/render/layout";
+import type { CalibreBook, CalibrePushMode } from "./types/calibre";
 
 /** 测试可注入会话；生产环境每个应用实例持有一份独立会话。 */
 const props = defineProps<{ session?: BookSession }>();
@@ -50,6 +56,67 @@ const {
   reset,
   updateMeta,
 } = session;
+
+/** 导入、封面与 calibre-web 共享同一会话，组件只注入这些实例。 */
+const importer = useImport(session);
+const coverController = useCover(session);
+const calibre = useCalibre({ session, importer, cover: coverController });
+
+/** 导出 EPUB 后的推送模式；推送目标的关联书籍变化时自动复位。 */
+const pushMode = ref<CalibrePushMode>("off");
+const pushing = ref(false);
+const hasEpub = computed<boolean>(
+  () => calibre.linkedBook.value?.formats.includes("EPUB") ?? false,
+);
+const calibreCanPush = computed<boolean>(() => calibre.canPush.value);
+const calibreTitle = computed<string>(() => calibre.linkedBook.value?.title ?? "");
+
+/** 同一时刻只打开一个 calibre-web 弹窗。 */
+const libraryOpen = ref(false);
+const settingsOpen = ref(false);
+
+watch(
+  [calibre.linkedBook, calibre.canPush, hasEpub],
+  () => {
+    pushMode.value =
+      calibre.canPush.value && calibre.linkedBook.value && !hasEpub.value
+        ? "download-and-push"
+        : "off";
+  },
+  { immediate: true },
+);
+
+function openLibrary(): void {
+  settingsOpen.value = false;
+  libraryOpen.value = true;
+  // 旧操作留下的提示不应在新弹窗里重复出现；错误保留，提醒用户仍需处理。
+  calibre.notice.value = "";
+}
+
+function openSettings(): void {
+  libraryOpen.value = false;
+  settingsOpen.value = true;
+  calibre.notice.value = "";
+}
+
+function closeDialogs(): void {
+  libraryOpen.value = false;
+  settingsOpen.value = false;
+}
+
+function onImported(book: CalibreBook): void {
+  libraryOpen.value = false;
+  pushToast({ message: `已导入《${book.title}》`, kind: "success" });
+}
+
+// 登录成功后才读取 calibre-web 状态；未登录时不触碰服务端连接。
+watch(
+  authenticated,
+  (value) => {
+    if (value) void calibre.loadStatus();
+  },
+  { immediate: true },
+);
 
 /** 卷扉页「回到章节」的目标：该卷阅读顺序中的第一章。 */
 const volumeFirstChapterId = computed<string | null>(() => {
@@ -121,6 +188,8 @@ watch(themeId, cancelBackground, { flush: "sync" });
 
 onBeforeUnmount(() => {
   cancelBackground();
+  // CoverPanel 只使用注入的实例，不再自行释放；对象 URL 与在途请求由 App 统一收尾。
+  coverController.dispose();
 });
 
 function onUpdateElement(payload: { key: ElementKey; patch: Partial<ElementStyle> }): void {
@@ -143,6 +212,10 @@ function handleUnauthorized(): void {
   clearSession();
   // 与登出行为一致：会话失效后丢弃当前书籍，避免重新登录看到上一会话内容。
   reset();
+  // 让在途封面请求失效并释放预览 URL，避免迟到的响应写回已清空的会话。
+  coverController.dispose();
+  calibre.clearLocal();
+  closeDialogs();
   if (wasAuthenticated) {
     pushToast({
       message: "登录已失效，当前书籍已清空，请重新登录。",
@@ -162,6 +235,10 @@ async function onLogout(): Promise<void> {
   await logout();
   // 登出后书籍不再属于当前用户，重置避免下次登录看到上一会话内容。
   reset();
+  // 与 401 一致：中止在途封面请求，迟到的响应不得写回已重置的会话。
+  coverController.dispose();
+  calibre.clearLocal();
+  closeDialogs();
 }
 
 function onRulesChange(next: ChapterRule[]): void {
@@ -265,8 +342,61 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
       },
     });
     const filename = exportFileName(converter.extension);
-    downloadBlob(blob, filename);
-    pushToast({ message: `已导出「${filename}」`, kind: "success" });
+    const mode: CalibrePushMode =
+      request.format === "epub" ? pushMode.value : "off";
+    const shouldDownload = mode !== "push-only";
+    const shouldPush = mode !== "off" && calibreCanPush.value;
+
+    // 仅推送时不生成本地文件；转换结果只用于上传。
+    if (shouldDownload) downloadBlob(blob, filename);
+
+    if (!shouldPush) {
+      if (shouldDownload) {
+        pushToast({ message: `已导出「${filename}」`, kind: "success" });
+      } else {
+        pushToast({
+          message: "当前没有可执行的导出或推送，请检查推送设置。",
+          kind: "info",
+        });
+      }
+      return;
+    }
+
+    pushing.value = true;
+    try {
+      const pushed = await calibre.push(blob, filename);
+      if (pushed) {
+        const title = calibreTitle.value || book.value.meta.title;
+        pushToast({
+          message: `已推送到 Calibre-Web「${title}」`,
+          kind: "success",
+        });
+      } else if (calibre.error.value !== "") {
+        const detail = calibre.error.value;
+        pushToast({
+          message: shouldDownload
+            ? `已下载，但推送失败：${detail}`
+            : `推送失败，未生成本地文件：${detail}${detail.endsWith("。") ? "" : "。"}可切换到「下载并推送」后重试`,
+          kind: "error",
+        });
+      } else {
+        pushToast({
+          message: shouldDownload
+            ? "已取消推送，本地文件已下载"
+            : "已取消推送，未生成本地文件",
+          kind: "info",
+        });
+      }
+    } catch {
+      pushToast({
+        message: shouldDownload
+          ? "已下载，但推送失败：请稍后重试。"
+          : "推送失败，未生成本地文件：请稍后重试。可切换到「下载并推送」后重试",
+        kind: "error",
+      });
+    } finally {
+      pushing.value = false;
+    }
   } catch (cause) {
     pushToast({ message: errorMessage(cause), kind: "error" });
   } finally {
@@ -283,6 +413,22 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
         <span class="brand-note">TXT 转电子书</span>
       </div>
       <div v-if="authenticated" class="header-actions">
+        <button
+          type="button"
+          class="btn btn-ghost"
+          data-test="open-library"
+          @click="openLibrary"
+        >
+          书库
+        </button>
+        <button
+          type="button"
+          class="btn btn-ghost"
+          data-test="open-settings"
+          @click="openSettings"
+        >
+          设置
+        </button>
         <a class="jump-export" href="#export-card" data-test="jump-export">跳到导出</a>
         <span class="header-user" data-test="header-user">{{ username }}</span>
         <button type="button" class="btn btn-ghost" data-test="logout" @click="onLogout">
@@ -320,7 +466,7 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
             @remove-volume="onRemoveVolume"
             @undo="undo"
           />
-          <UploadPanel :session="session" :rules="rules" />
+          <UploadPanel :session="session" :rules="rules" :importer="importer" />
         </div>
 
         <div class="workspace-col workspace-col-main">
@@ -339,7 +485,7 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
 
         <div class="workspace-col">
           <BookMetaPanel :meta="book.meta" @update:meta="updateMeta" />
-          <CoverPanel :session="session" />
+          <CoverPanel :session="session" :controller="coverController" />
           <ThemePicker :model-value="themeId" @update:model-value="setTheme" />
           <details class="card layout-card" data-test="layout-card" open>
             <summary class="layout-card-header">
@@ -378,6 +524,12 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
             :progress="exportProgress"
             :disabled="!hasBook"
             :hint="EXPORT_HINT"
+            :can-push="calibreCanPush"
+            :push-mode="pushMode"
+            :calibre-title="calibreTitle"
+            :has-epub="hasEpub"
+            :pushing="pushing"
+            @update:push-mode="pushMode = $event"
             @export="onExport"
           />
         </div>
@@ -387,6 +539,20 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
         </a>
       </div>
     </main>
+
+    <CalibreSettingsDialog
+      v-if="settingsOpen"
+      :calibre="calibre"
+      @close="settingsOpen = false"
+      @open-library="openLibrary"
+    />
+    <CalibreLibraryDialog
+      v-if="libraryOpen"
+      :calibre="calibre"
+      @close="libraryOpen = false"
+      @open-settings="openSettings"
+      @imported="onImported"
+    />
 
     <ToastStack :toasts="toasts" @dismiss="dismissToast" @action="runToastAction" />
   </div>

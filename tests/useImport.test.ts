@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { useBookSession } from "../src/composables/useBookSession";
 import { useImport } from "../src/composables/useImport";
 import type { ChapterRule } from "../src/core/customRules";
+import type { BookSource, CoverAsset } from "../src/types/book";
 
 const GB18030_SAMPLE = new Uint8Array([
   0xb5, 0xda, 0xd2, 0xbb, 0xd5, 0xc2, 0x20, 0xbf, 0xaa, 0xca, 0xbc, 0x0a, 0xd5, 0xfd, 0xce,
@@ -18,6 +19,21 @@ const CUSTOM_RULE: ChapterRule = {
   pattern: "^自定义.*$",
   enabled: true,
   kind: "chapter",
+};
+
+const SOURCE: BookSource = {
+  kind: "calibre-web",
+  origin: "https://books.example.com",
+  bookId: 42,
+  title: "三体",
+  formats: ["EPUB"],
+};
+
+const COVER: CoverAsset = {
+  png: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+  width: 2,
+  height: 3,
+  sourceName: "cover.jpg",
 };
 
 describe("useImport", () => {
@@ -192,5 +208,105 @@ describe("useImport", () => {
     expect(imp.busy.value).toBe(false);
     expect(imp.fileName.value).toBe("a.txt");
     expect(session.book.value.chapters[0].title).toBe("第一章 开始");
+  });
+
+  it("imports bytes with meta, source and cover", async () => {
+    const session = useBookSession();
+    const imp = useImport(session);
+
+    const imported = await imp.importBytes(utf8Bytes("第一章 开始\n正文"), "book.txt", "auto", {
+      meta: { title: "三体", author: "刘慈欣", language: "zh-CN", description: "简介" },
+      source: SOURCE,
+      cover: COVER,
+    });
+
+    expect(imported).toBe(true);
+    expect(imp.error.value).toBe("");
+    expect(imp.fileName.value).toBe("book.txt");
+    expect(imp.rawBytes.value).not.toBeNull();
+    expect(session.book.value.meta).toEqual({
+      title: "三体",
+      author: "刘慈欣",
+      language: "zh-CN",
+      description: "简介",
+    });
+    expect(session.book.value.source).toEqual(SOURCE);
+    expect(session.book.value.cover).toEqual(COVER);
+    expect(session.book.value.chapters.map((chapter) => chapter.title)).toEqual(["第一章 开始"]);
+  });
+
+  it("clears an existing cover when the cover option is null", async () => {
+    const session = useBookSession();
+    const imp = useImport(session);
+    await imp.importBytes(utf8Bytes("第一章 开始\n正文"), "cover.txt", "utf-8", {
+      cover: COVER,
+    });
+    expect(session.book.value.cover).toEqual(COVER);
+
+    const imported = await imp.importBytes(utf8Bytes("第一章 开始\n正文"), "no-cover.txt", "utf-8", {
+      cover: null,
+    });
+
+    expect(imported).toBe(true);
+    expect(session.book.value.cover).toBeNull();
+  });
+
+  it("keeps the existing cover when the cover option is absent", async () => {
+    const session = useBookSession();
+    const imp = useImport(session);
+    await imp.importBytes(utf8Bytes("第一章 开始\n正文"), "cover.txt", "utf-8", {
+      cover: COVER,
+    });
+
+    await imp.importBytes(utf8Bytes("第一章 开始\n正文"), "same-cover.txt", "utf-8");
+
+    expect(session.book.value.cover).toEqual(COVER);
+  });
+
+  it("parses the fallback chapter title in English", async () => {
+    const session = useBookSession();
+    const imp = useImport(session);
+
+    await imp.importBytes(
+      utf8Bytes("Plain text without any chapter heading."),
+      "english.txt",
+      "utf-8",
+      { meta: { language: "en" } },
+    );
+
+    expect(session.book.value.meta.language).toBe("en");
+    expect(session.book.value.chapters[0].title).toBe("Content");
+  });
+
+  it("keeps source, title, author, description and language across reparse", async () => {
+    const session = useBookSession();
+    const imp = useImport(session);
+    await imp.importBytes(utf8Bytes("第一章 开始\n正文"), "book.txt", "auto", {
+      meta: { title: "三体", author: "刘慈欣", language: "en", description: "简介" },
+      source: SOURCE,
+    });
+    const bytes = imp.rawBytes.value;
+
+    await imp.reparse("utf-8", []);
+
+    expect(imp.rawBytes.value).toBe(bytes);
+    expect(session.book.value.source).toEqual(SOURCE);
+    expect(session.book.value.meta).toEqual({
+      title: "三体",
+      author: "刘慈欣",
+      language: "en",
+      description: "简介",
+    });
+    expect(session.book.value.chapters[0].title).toBe("第一章 开始");
+  });
+
+  it("leaves source null when importFile is called without options", async () => {
+    const session = useBookSession();
+    const imp = useImport(session);
+
+    await imp.importFile(new File(["第一章 开始\n正文"], "local.txt"), "utf-8");
+
+    expect(session.book.value.source).toBeNull();
+    expect(session.book.value.meta.language).toBe("zh-CN");
   });
 });

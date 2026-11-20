@@ -5,10 +5,17 @@ import {
   ENCODING_OPTIONS,
   useImport,
   type SourceEncoding,
+  type UseImport,
 } from "../composables/useImport";
 import { loadRules, type ChapterRule } from "../core/customRules";
 
-const props = defineProps<{ session: BookSession; rules?: ChapterRule[] }>();
+const props = defineProps<{
+  session: BookSession;
+  rules?: ChapterRule[];
+  importer?: UseImport;
+}>();
+
+const importer = props.importer ?? useImport(props.session);
 
 const {
   fileName,
@@ -20,7 +27,7 @@ const {
   error,
   importFile,
   reparse: runReparse,
-} = useImport(props.session);
+} = importer;
 
 const encoding = ref<SourceEncoding>("auto");
 const dragDepth = ref(0);

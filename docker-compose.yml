@@ -9,6 +9,9 @@ services:
       - "8080:3000"
     env_file:
       - .env
+    # calibre-web 连接凭据落在 /data，使用命名卷跨容器重建持久化。
+    volumes:
+      - txt2book-data:/data
     # 不设置 TZ：服务端 logger 已关闭，进程内没有本地时间格式化逻辑。
     # 如未来开启日志并需要固定时区，再取消下面注释。
     # environment:
@@ -37,3 +40,8 @@ services:
 #      proxy_set_header X-Forwarded-Proto $scheme;
 #
 # 3. 只在反向代理已经终结 TLS 时开启上述两项；直接暴露 http 时保持默认 false。
+
+# calibre-web 凭据的命名卷。docker compose down 不会删除它，
+# 需要彻底清理时显式执行 docker compose down -v。
+volumes:
+  txt2book-data:

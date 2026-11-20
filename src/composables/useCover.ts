@@ -19,6 +19,13 @@ export interface UseCover {
   fromUrl(url: string): Promise<boolean>;
   /** 上传本地文件交给后端转换；返回是否成功。 */
   fromFile(file: File): Promise<boolean>;
+  /**
+   * 只做 PNG 校验与尺寸测量，返回可直接用于导入的资源。
+   * 不注册取消用的 controller、不建超时定时器，也不写会话/预览/错误/busy。
+   */
+  prepare(blob: Blob, sourceName?: string): Promise<CoverAsset>;
+  /** 校验内存中的 Blob 后写入会话并生成预览；返回是否成功。 */
+  fromBlob(blob: Blob, sourceName?: string): Promise<boolean>;
   /** 清除封面、预览地址与会话中的封面资源。 */
   clear(): void;
   /** 释放 object URL；组件卸载时调用，不改动会话中的封面。 */
@@ -181,6 +188,47 @@ export function useCover(
     busy.value = true;
     error.value = "";
 
+    try {
+      const { asset, blob } = await loadAssetWithBlob(load, sourceName);
+
+      // 期间用户点了清除或组件已卸载，丢弃这次结果。
+      if (id !== requestId) return false;
+
+      commit(asset, blob);
+      return true;
+    } catch (cause) {
+      if (id === requestId) error.value = coverErrorMessage(cause);
+      return false;
+    } finally {
+      if (id === requestId) busy.value = false;
+    }
+  }
+
+  /**
+   * 纯校验与测量：不注册 controller、不建定时器，也不产生任何副作用写入。
+   * 校验失败抛出既有的错误类型。
+   */
+  async function prepare(blob: Blob, sourceName?: string): Promise<CoverAsset> {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    if (!isPngBlob(blob, bytes)) throw new InvalidCoverError("invalid png");
+
+    const size = await measureImageSize(blob);
+    return markRaw<CoverAsset>({
+      png: bytes,
+      width: size.width,
+      height: size.height,
+      ...(sourceName ? { sourceName } : {}),
+    });
+  }
+
+  /**
+   * 下载、超时与测量的共享路径；失败抛出既有的错误类型。
+   * 只有真正发起下载的调用才注册 `activeController`，保证 clear/dispose 能取消它。
+   */
+  async function loadAssetWithBlob(
+    load: (signal: AbortSignal) => Promise<Blob>,
+    sourceName?: string,
+  ): Promise<{ asset: CoverAsset; blob: Blob }> {
     const controller = new AbortController();
     activeController = controller;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -194,34 +242,24 @@ export function useCover(
       });
 
       const blob = await Promise.race([load(controller.signal), timeout]);
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-
-      // 期间用户点了清除或组件已卸载，丢弃这次结果。
-      if (id !== requestId) return false;
-      if (!isPngBlob(blob, bytes)) throw new InvalidCoverError("invalid png");
-
-      const size = await measureImageSize(blob);
-      if (id !== requestId) return false;
-
-      const asset = markRaw<CoverAsset>({
-        png: bytes,
-        width: size.width,
-        height: size.height,
-        ...(sourceName ? { sourceName } : {}),
-      });
-
-      replacePreview(blob);
-      cover.value = asset;
-      session.setCover(asset);
-      return true;
-    } catch (cause) {
-      if (id === requestId) error.value = coverErrorMessage(cause);
-      return false;
+      const asset = await prepare(blob, sourceName);
+      return { asset, blob };
     } finally {
       if (timer !== null) clearTimeout(timer);
       if (activeController === controller) activeController = null;
-      if (id === requestId) busy.value = false;
     }
+  }
+
+  /** 成功后才替换预览与会话封面，失败路径不产生任何写入。 */
+  function commit(asset: CoverAsset, preview: Blob): void {
+    replacePreview(preview);
+    cover.value = asset;
+    session.setCover(asset);
+  }
+
+  /** 内存中的 Blob 也走 run 的写入路径，保持 busy/requestId 与取消语义。 */
+  async function fromBlob(blob: Blob, sourceName?: string): Promise<boolean> {
+    return run(async () => blob, sourceName);
   }
 
   async function fromUrl(url: string): Promise<boolean> {
@@ -262,6 +300,8 @@ export function useCover(
     error,
     fromUrl,
     fromFile,
+    prepare,
+    fromBlob,
     clear,
     dispose,
   };

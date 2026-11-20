@@ -320,6 +320,23 @@ describe("POST /api/cover/from-url", () => {
       await app.close();
     }
   });
+
+  it("rejects unknown fields because removeAdditional is disabled", async () => {
+    const app = await makeApp();
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/cover/from-url",
+        headers: { cookie: sessionCookie() },
+        payload: { url: "https://example.com/a.png", extra: true },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(errorBody(res).code).toBe("INVALID_URL");
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 describe("POST /api/cover/from-file", () => {

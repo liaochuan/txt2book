@@ -355,6 +355,91 @@ describe("ExportPanel", () => {
     }
   });
 
+  it("hides the push option when the linked book cannot be pushed", () => {
+    const wrapper = mountPanel({ canPush: false });
+
+    expect(wrapper.find('[data-test="push-mode"]').exists()).toBe(false);
+  });
+
+  it("shows the push mode select for EPUB and emits the new value", async () => {
+    const wrapper = mountPanel({ canPush: true, pushMode: "off" });
+    const select = wrapper.get('[data-test="push-mode"]');
+
+    expect((select.element as HTMLSelectElement).value).toBe("off");
+    expect(select.findAll("option").map((option) => option.text())).toEqual([
+      "不推送",
+      "下载并推送",
+      "仅推送（不下载）",
+    ]);
+
+    await select.setValue("download-and-push");
+    expect(wrapper.emitted("update:pushMode")).toEqual([["download-and-push"]]);
+
+    await wrapper.setProps({ pushMode: "download-and-push" });
+    expect((select.element as HTMLSelectElement).value).toBe("download-and-push");
+  });
+
+  it("no longer renders the old push checkbox", () => {
+    const wrapper = mountPanel({ canPush: true, pushMode: "download-and-push" });
+
+    expect(wrapper.find('[data-test="push-to-calibre"]').exists()).toBe(false);
+  });
+
+  it("hides the push option for non-EPUB formats", async () => {
+    const wrapper = mountPanel({ canPush: true });
+
+    expect(wrapper.find('[data-test="push-mode"]').exists()).toBe(true);
+
+    await wrapper.get('[data-test="format-pdf"]').trigger("click");
+
+    expect(wrapper.find('[data-test="push-mode"]').exists()).toBe(false);
+  });
+
+  it("warns that pushing overwrites an existing EPUB", () => {
+    const wrapper = mountPanel({
+      canPush: true,
+      pushMode: "off",
+      hasEpub: true,
+      calibreTitle: "测试书",
+    });
+
+    expect(wrapper.get('[data-test="push-overwrite-warning"]').text()).toBe(
+      "该书已有 EPUB，推送会覆盖原文件",
+    );
+    expect(wrapper.get('[data-test="push-overwrite-warning"]').attributes("id")).toBe(
+      "push-overwrite-warning",
+    );
+    expect(wrapper.get('[data-test="push-mode"]').attributes("aria-describedby")).toBe(
+      "push-overwrite-warning",
+    );
+  });
+
+  it("shows the push-only hint and relabels the export button", () => {
+    const wrapper = mountPanel({ canPush: true, pushMode: "push-only" });
+
+    expect(wrapper.get('[data-test="push-only-hint"]').text()).toBe(
+      "仅推送到 Calibre-Web，不会下载本地文件。",
+    );
+    expect(wrapper.get('[data-test="export"]').text()).toContain("仅推送 EPUB");
+    expect(wrapper.get('[data-test="export"]').text()).not.toContain("导出 EPUB");
+  });
+
+  it("disables the push select and export while pushing", () => {
+    const wrapper = mountPanel({
+      canPush: true,
+      pushMode: "download-and-push",
+      pushing: true,
+    });
+
+    const button = wrapper.get('[data-test="export"]');
+    expect(button.attributes("disabled")).toBeDefined();
+    expect(button.text()).toContain("正在推送");
+    expect(wrapper.get('[data-test="push-mode"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get('[data-test="export-push-progress"]').text()).toContain(
+      "正在推送到 Calibre-Web…",
+    );
+  });
+
   it("renders the busy progress without inline styles", () => {
     const wrapper = mountPanel({
       busy: true,

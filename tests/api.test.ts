@@ -233,3 +233,227 @@ describe("api", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 });
+
+function atomResponse(xml = "<feed/>"): Response {
+  return new Response(xml, {
+    status: 200,
+    headers: { "content-type": "application/atom+xml; charset=utf-8" },
+  });
+}
+
+function calibreSessionBody() {
+  return { connected: true, saved: true, baseUrl: "http://calibre.local", username: "reader" };
+}
+
+describe("api.calibre", () => {
+  it("requests the feed with encoded query parameters in a stable order", async () => {
+    const fetchMock = vi.fn(async (_input: string, _init?: RequestInit) => atomResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const xml = await api.calibreFeed({ offset: 30, q: "三体", format: "txt" });
+
+    expect(xml).toBe("<feed/>");
+    const [input, init] = fetchMock.mock.calls[0];
+    expect(input).toBe("/api/calibre/feed?offset=30&q=%E4%B8%89%E4%BD%93&format=txt");
+    expect(init?.credentials).toBe("same-origin");
+    expect(init?.headers).toMatchObject({ accept: "application/atom+xml" });
+  });
+
+  it("omits empty feed query parameters", async () => {
+    const fetchMock = vi.fn(async (_input: string, _init?: RequestInit) => atomResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.calibreFeed({});
+    await api.calibreFeed({ q: "", format: "" });
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/calibre/feed");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/calibre/feed");
+  });
+
+  it("reads the calibre session from /api/calibre/session", async () => {
+    const fetchMock = vi.fn(async (_input: string, _init?: RequestInit) =>
+      jsonResponse(calibreSessionBody()),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.calibreStatus()).resolves.toEqual(calibreSessionBody());
+    const [input, init] = fetchMock.mock.calls[0];
+    expect(input).toBe("/api/calibre/session");
+    expect(init?.method).toBeUndefined();
+    expect(init?.headers).toMatchObject({ accept: "application/json" });
+  });
+
+  it("posts the connect payload as JSON", async () => {
+    const fetchMock = vi.fn(async (_input: string, _init?: RequestInit) =>
+      jsonResponse(calibreSessionBody()),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const info = await api.calibreConnect({
+      baseUrl: "http://calibre.local",
+      username: "reader",
+      password: "secret",
+    });
+
+    expect(info.connected).toBe(true);
+    const [input, init] = fetchMock.mock.calls[0];
+    expect(input).toBe("/api/calibre/session");
+    expect(init?.method).toBe("POST");
+    expect(init?.credentials).toBe("same-origin");
+    expect(init?.headers).toMatchObject({ "content-type": "application/json" });
+    expect(JSON.parse(String(init?.body))).toEqual({
+      baseUrl: "http://calibre.local",
+      username: "reader",
+      password: "secret",
+    });
+  });
+
+  it("reconnects with a POST and no body", async () => {
+    const fetchMock = vi.fn(async (_input: string, _init?: RequestInit) =>
+      jsonResponse(calibreSessionBody()),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.calibreReconnect();
+
+    const [input, init] = fetchMock.mock.calls[0];
+    expect(input).toBe("/api/calibre/session/reconnect");
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBeUndefined();
+  });
+
+  it("disconnects with a DELETE and no body", async () => {
+    const fetchMock = vi.fn(async (_input: string, _init?: RequestInit) => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.calibreDisconnect()).resolves.toBeUndefined();
+
+    const [input, init] = fetchMock.mock.calls[0];
+    expect(input).toBe("/api/calibre/session");
+    expect(init?.method).toBe("DELETE");
+    expect(init?.body).toBeUndefined();
+  });
+
+  it("forgets stored credentials via DELETE /api/calibre/credentials", async () => {
+    const fetchMock = vi.fn(async (_input: string, _init?: RequestInit) => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.calibreForget()).resolves.toBeUndefined();
+
+    const [input, init] = fetchMock.mock.calls[0];
+    expect(input).toBe("/api/calibre/credentials");
+    expect(init?.method).toBe("DELETE");
+    expect(init?.body).toBeUndefined();
+  });
+
+  it("downloads a book text file as a blob without a query string", async () => {
+    const fetchMock = vi.fn(
+      async (_input: string, _init?: RequestInit) =>
+        new Response(new Uint8Array([1, 2, 3]), {
+          status: 200,
+          headers: { "content-type": "application/octet-stream" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const blob = await api.calibreTextFile(7);
+
+    expect(blob.size).toBe(3);
+    const [input, init] = fetchMock.mock.calls[0];
+    expect(input).toBe("/api/calibre/books/7/file");
+    expect(init?.headers).toMatchObject({ accept: "application/octet-stream" });
+  });
+
+  it("downloads a cover as a png blob", async () => {
+    const fetchMock = vi.fn(async (_input: string, _init?: RequestInit) => pngResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const blob = await api.calibreCover(7);
+
+    expect(blob.type).toBe("image/png");
+    const [input, init] = fetchMock.mock.calls[0];
+    expect(input).toBe("/api/calibre/books/7/cover");
+    expect(init?.headers).toMatchObject({ accept: "image/png" });
+  });
+
+  it("rejects a cover response that is not a png", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("<html>boom</html>", {
+            status: 200,
+            headers: { "content-type": "text/html" },
+          }),
+      ),
+    );
+
+    await expect(api.calibreCover(7)).rejects.toMatchObject({
+      status: 200,
+      code: "BAD_RESPONSE",
+    });
+  });
+
+  it("pushes an epub as multipart form data with the overwrite query flag", async () => {
+    const fetchMock = vi.fn(async (_input: string, _init?: RequestInit) => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "application/epub+zip" });
+
+    await expect(api.calibrePush(7, blob, "三体.epub", true)).resolves.toBeUndefined();
+
+    const [input, init] = fetchMock.mock.calls[0];
+    expect(input).toBe("/api/calibre/books/7/epub?overwrite=true");
+    expect(init?.method).toBe("POST");
+    expect(init?.credentials).toBe("same-origin");
+    const form = init?.body as FormData;
+    expect(form).toBeInstanceOf(FormData);
+    const uploaded = form.get("file") as File;
+    expect(uploaded).toBeInstanceOf(File);
+    expect(uploaded.name).toBe("三体.epub");
+    expect(uploaded.size).toBe(3);
+  });
+
+  it("omits the overwrite flag when pushing without overwrite", async () => {
+    const fetchMock = vi.fn(async (_input: string, _init?: RequestInit) => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const blob = new Blob([new Uint8Array([1])], { type: "application/epub+zip" });
+
+    await api.calibrePush(9, blob, "book.epub", false);
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/calibre/books/9/epub");
+  });
+
+  it("maps calibre 404 and 502 error bodies to ApiError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { code: "CALIBRE_NOT_FOUND", message: "书不存在" } }), {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    );
+    await expect(api.calibreTextFile(7)).rejects.toMatchObject({
+      status: 404,
+      code: "CALIBRE_NOT_FOUND",
+      message: "书不存在",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { code: "CALIBRE_UPSTREAM", message: "上游不可用" } }), {
+            status: 502,
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    );
+    await expect(api.calibreFeed({})).rejects.toMatchObject({
+      status: 502,
+      code: "CALIBRE_UPSTREAM",
+      message: "上游不可用",
+    });
+  });
+});

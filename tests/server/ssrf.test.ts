@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 import {
+  isAlwaysBlockedIp,
   isBlockedHostname,
   isBlockedIp,
   normalizeIp,
@@ -128,6 +129,52 @@ describe("isBlockedIp", () => {
     "2002:808:808::",
   ])("allows %s", (ip) => {
     expect(isBlockedIp(ip)).toBe(false);
+  });
+});
+
+describe("isAlwaysBlockedIp", () => {
+  it.each([
+    // 直接命中的始终拒绝网段
+    "0.0.0.0",
+    "0.255.255.255",
+    "169.254.169.254",
+    "100.100.100.200",
+    "224.0.0.1",
+    "239.255.255.255",
+    "240.0.0.1",
+    "255.255.255.255",
+    "ff00::1",
+    "ff02::1",
+    "fec0::1",
+    // IPv4 embedded：mapped / NAT64 / 6to4
+    "::ffff:a9fe:a9fe",
+    "::ffff:169.254.169.254",
+    "64:ff9b::a9fe:a9fe",
+    "2002:a9fe:a9fe::",
+    "64:ff9b::6464:64c8",
+    // 非 IP 一律 fail closed
+    "",
+    "not-an-ip",
+  ])("blocks %s even when private addresses are allowed", (ip) => {
+    expect(isAlwaysBlockedIp(ip)).toBe(true);
+  });
+
+  it.each([
+    // 允许私网时，RFC1918、回环与 CGNAT 可以访问
+    "10.0.0.1",
+    "172.16.0.1",
+    "192.168.1.1",
+    "127.0.0.1",
+    "100.64.0.1",
+    "::1",
+    "fc00::1",
+    // 内嵌公网 IPv4 的过渡地址仍然允许
+    "::ffff:8.8.8.8",
+    "64:ff9b::808:808",
+    "2002:808:808::",
+    "2606:4700:4700::1111",
+  ])("allows %s when private addresses are allowed", (ip) => {
+    expect(isAlwaysBlockedIp(ip)).toBe(false);
   });
 });
 

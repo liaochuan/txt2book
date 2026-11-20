@@ -1,6 +1,6 @@
 # txt2book
 
-把 TXT 小说转换为 EPUB / HTML / TXT / PDF 的 Web 工具。解析、预览、EPUB / HTML / TXT 生成都在浏览器里完成，文件不会上传；Node 服务端负责登录认证、封面抓取/转换、静态资源托管，以及服务端 PDF 排版。
+把 TXT 小说转换为 EPUB / HTML / TXT / PDF 的 Web 工具。解析、预览、EPUB / HTML / TXT 生成都在浏览器里完成，文件不会上传；Node 服务端负责登录认证、封面抓取/转换、静态资源托管、服务端 PDF 排版，以及代理已连接的 calibre-web（读取书库、回传 EPUB）。
 
 ## 功能列表
 
@@ -18,6 +18,11 @@
 - 导出整理版 TXT：UTF-8 无 BOM，卷/章标题独占一行，保留正文段落。
 - 导出 PDF：A4 / A5、标准或窄边距、页脚页码、封面、带页码目录、卷→章书签；服务端内置 Noto CJK 中文字体。
 - 单账号登录保护，登录与封面接口均有限流。
+- calibre-web 书库连接：填写地址、账号、密码即可浏览书库；连接配置加密保存，重启或换浏览器登录后自动复用。
+- 「断开连接」只清连接、保留已保存配置；「忘记凭据」会删除配置，下次必须重新输入密码。
+- 书库默认按最近添加浏览，也可关键词搜索与「只看有 TXT 的」过滤，可分页加载；账号看不到「最近」时回退到全部书单（按 calibre-web 默认排序，通常为书名），并按更新时间对当前页近似排序。
+- 从书库导入 TXT 时自动填入书名、作者、语言、简介与封面。
+- EPUB 导出后可推送回原书（作为新增格式）；目标书已有 EPUB 时需确认覆盖。
 - 阅读主题独立于应用界面，仅作用于预览与导出内容。
 - 自带站点图标与 PWA manifest，可添加到桌面/主屏。
 
@@ -30,7 +35,7 @@
 | TXT | `.txt` | 浏览器 | 纯文本备份、再加工 | 无排版、封面、背景与图片；连续空行会折叠 |
 | PDF | `.pdf` | 服务端 | 打印、固定版式阅读 | 需登录；网页 CSS 渐变、阴影、圆角不还原；有请求体积、字数、并发与频率限制 |
 
-浏览器端生成的三个格式不出本机；PDF 需要把书稿模型提交到服务端，返回的文件不落盘，直接在内存中下载。
+浏览器端生成的三个格式不出本机；PDF 需要把书稿模型提交到服务端，返回的文件不落盘，直接在内存中下载。EPUB 导出后可以选择「下载并推送」或「仅推送（不下载）」到已关联的 calibre-web 书籍；下载并推送时，推送失败不影响本地文件。
 
 ## 界面与操作
 
@@ -38,7 +43,72 @@
 - 桌面端左侧栏与中间预览都会吸顶：右侧滚动到排版或导出时，目录和预览仍留在视口内；窄屏自动取消吸顶，并在右下角提供「查看预览」按钮。
 - 目录树的折叠箭头与卷名分开：点箭头只折叠/展开，点卷名预览该卷扉页；再次点击同一卷名回到章节。
 - 章节行支持双击或 `F2` 重命名，`Enter` 保存、`Esc` 取消；搜索框按标题实时过滤。
+- 顶栏「设置」弹窗负责 Calibre-Web 账户配置：未连接时填写地址、账号、密码；连接后显示地址与账号，并提供「打开书库」「修改连接」「断开连接」「忘记凭据」。
+- 顶栏「书库」弹窗负责选书：搜索框（300ms 防抖）、「只看有 TXT 的」开关、书籍列表、加载更多与导入；未连接时提示先在设置中连接。两个弹窗同一时刻只打开一个，可用 Esc、遮罩或关闭按钮退出。
+- 右侧导出卡片只有在「格式为 EPUB + 当前书籍已关联到当前连接 + 连接可推送」时才显示 Calibre-Web 推送方式，可选「不推送」「下载并推送」「仅推送（不下载）」；目标书已有 EPUB 时提示推送会覆盖原文件。仅推送模式不会生成本地文件。
 - 所有阅读排版（主题、高级排版、背景）只作用于预览与导出的电子书，不会改变应用界面。
+
+## calibre-web 书库对接
+
+txt2book 可以通过顶栏「设置」弹窗连接一个 calibre-web 实例，再从「书库」弹窗浏览书库、把含 TXT 的图书导入转换，并在导出 EPUB 后推送回原书。
+
+### 前置条件
+
+- calibre-web 需开启 OPDS；账号至少要有 `download` 权限才能读取列表与 TXT。
+- 推送要求账号能通过 calibre-web 的网页表单登录，并具有上传/编辑权限；calibre-web 需开启「允许上传」，且 EPUB 在允许的扩展名内。
+- v1 只适配 calibre-web，不支持 calibre 原生的内容服务器（`calibre-server`）。
+
+### 连接与地址
+
+- 填写站点根地址，例如 `https://books.example.com`；反向代理到子路径时填写完整前缀，例如 `https://example.com/calibre`。不要带结尾 `/`、查询参数、`#` 或 URL 内嵌账号。
+- 地址只允许 `http` / `https`；端口沿用封面抓取规则（80/443/8080/8443，或 ≥1024 且不在常见服务端口黑名单内）。
+- 连接时先做 OPDS Basic 认证确认可读，再单独尝试网页登录确认可推送。网页登录失败不影响浏览，只是隐藏推送入口。
+- 域名只解析一次并固定 IP；DNS 变化后需「修改连接」重新保存。所有请求只发往这个已连接的 origin，不跨 origin 重定向。
+
+### TLS 与自签证书
+
+- 服务端使用 Node 默认的 TLS 校验，没有「跳过证书校验」开关。
+- 自签或私有 CA 签发证书时，在启动 txt2book 前设置 `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`。该变量只在进程启动时读取；Docker 部署需要把证书文件挂进容器并设置同名环境变量。
+- 证书需覆盖填写的域名；使用子路径反向代理不影响证书校验。
+
+### 凭据保存与复用
+
+- 连接成功后，地址、账号、密码会加密写入 `CALIBRE_STORE_PATH`：AES-256-GCM，密钥由 `SESSION_SECRET` 经 HKDF 派生，文件权限 0600，先写临时文件再原子替换。
+- txt2book 重启或换浏览器登录后，只要配置存在且能解密，会自动尝试恢复连接；失败时保留地址与账号、只需补密码，不会循环重试，也不会打爆 calibre-web。
+- 更换 `SESSION_SECRET` 会使已保存配置无法解密，需要重新连接。设置 `CALIBRE_PERSIST_CREDENTIALS=false` 可完全关闭落盘，此时重启即失效。
+- 「断开连接」只清空服务端内存中的连接与 Cookie，保留已保存配置，下次登录仍会自动恢复；「忘记凭据」会删除配置文件，下次必须重新输入密码。两者都有确认提示。
+- 同一 txt2book 实例只维护一个连接，多个浏览器/标签页共享。连接尝试与推送各自全局串行（同一时刻只允许一个），避免并发请求同时压向 calibre-web。
+
+### 浏览与导入
+
+- 默认按最近添加列出书籍（`/opds/new`）；账号看不到「最近」栏目时自动回退到全部书单（按 calibre-web 默认排序，通常为书名），并在没有搜索词时按 entry 的 `<updated>` 对当前页倒序近似排序。打开「只看有 TXT 的」后隐藏没有 TXT 的书。搜索走 calibre-web 的 OPDS 搜索，TXT 过滤在浏览器端完成；若整页都被过滤且还有下一页，会自动续取（最多 3 页）。
+- 简介会把 calibre-web 的 HTML 段落、`<br>` 与常见实体转换为纯文本换行，导入后 EPUB / HTML / TXT / PDF 的简介页都能按段落显示。
+- 列表不加载封面缩略图，导入时才按需拉取该书封面。
+- 点击「导入」会用书库数据覆盖当前书籍：书名、作者、语言、简介强制采用 calibre-web 的值；有封面时一并替换，没有封面或封面下载失败时清空旧封面。
+- 导入后的书籍会记住来源（实例 origin + `bookId`），导出时据此确认推送目标。从本地重新导入会立即清除关联，撤销会随书籍快照一起回滚。
+
+### 导出后推送
+
+- 只有导出格式为 EPUB、当前书籍已关联到当前连接、且连接可推送时，右侧导出卡片才显示 Calibre-Web 推送方式，可选「不推送」「下载并推送」「仅推送（不下载）」；推送进行中按钮显示「正在推送」。
+- 推送前服务端会先确认目标书是否已有 EPUB。已有且未确认覆盖时返回 `409 CALIBRE_EPUB_EXISTS`，界面弹确认；确认后带 `overwrite=true` 立即重试上传，不会重新生成 EPUB。目标书已有 EPUB 时推送方式默认设为「不推送」。
+- 「仅推送（不下载）」只在内存中完成转换并上传，不调用本地下载；失败或取消覆盖时不会生成本地文件，可切换到「下载并推送」后重试。
+- 推送成功会提示已推送到 Calibre-Web 并带上书名，「下载并推送」会保留本地文件。推送失败或超时只影响回传，界面会提示可行动原因，可重新导出重试。
+- 推送通过模拟 calibre-web 网页表单完成：`POST /login` 取会话与 CSRF token，再 `POST /upload`，以 `book_id` + `btn-upload-format` 给原书追加格式；不新增书目，也不改动原有元数据与封面。
+- 覆盖同名格式时，calibre-web 会覆盖磁盘文件但可能不更新数据库中的文件大小；功能不受影响，体积显示可能偏旧。
+
+### 资源与限流
+
+- 单个 TXT 下载上限 50MB（`CALIBRE_MAX_FILE_BYTES`），单次 EPUB 推送上限 50MB（`CALIBRE_MAX_PUSH_BYTES`），超限返回 `413 CALIBRE_TOO_LARGE`。
+- 普通上游请求（列表、封面、登录、推送预检）默认 15 秒超时（`CALIBRE_TIMEOUT_MS`）；上传 EPUB 使用独立的 120 秒超时（`CALIBRE_PUSH_TIMEOUT_MS`）。推送超时返回 `504`，结果视为未确认。
+- 同一时刻只允许 1 个连接尝试和 1 次推送，占用时返回 `429 CALIBRE_BUSY`。
+- 默认按客户端 IP 限流：读取类 120 次/分钟、推送 6 次/分钟、连接尝试 5 次/分钟；连接失败也计数。
+- TXT 与 EPUB 只经过服务端内存转发，不写入磁盘；唯一新增的落盘数据是加密后的连接配置。
+
+### Docker 与网络
+
+- 镜像默认把配置写到 `/data/calibre-connection.json`，`docker-compose.yml` 用命名卷 `txt2book-data:/data` 持久化。不挂载卷时，容器重建会丢失配置；`docker compose down` 不会删除该卷，`docker compose down -v` 才会。
+- txt2book 与 calibre-web 同机 Docker、又用公网域名访问时，容器内可能无法回环到该域名。优先让域名在内网解析到 calibre-web（内部 DNS 或 hosts），或直接填写容器可达的内网地址；容器内的 `127.0.0.1` 指向容器自身，不是宿主机。
+- `CALIBRE_ALLOW_PRIVATE` 默认 `true`，允许连接局域网与回环地址，适合自建书库。若 txt2book 暴露在公网、calibre-web 也在公网，建议设为 `false`；无论该开关如何，云元数据地址与链路本地地址始终拒绝。
 
 ## 章节识别规则
 
@@ -360,6 +430,24 @@ docker compose up -d --build           # 更新代码后重建
 
 健康检查请求 `GET /api/health`，正常返回 `{"ok":true}`；该接口无需登录，供容器与反向代理探活。
 
+### calibre-web 配置持久化与自签证书
+
+`docker-compose.yml` 已把命名卷 `txt2book-data` 挂到 `/data`，镜像默认将 calibre-web 连接配置写到 `/data/calibre-connection.json`。`docker compose down` 不会删除该卷，容器重建后配置仍在；只有 `docker compose down -v` 才会连同配置一起删除。自行修改 `CALIBRE_STORE_PATH` 时，请确保目标目录位于持久化卷上且对容器内 uid 1000 可写，否则只会降级为内存连接。
+
+calibre-web 使用自签或私有 CA 证书时，把 CA 证书挂进容器并设置 `NODE_EXTRA_CA_CERTS`。仓库的 `docker-compose.yml` **已经配置**了 `- txt2book-data:/data` 挂载项和顶层 `volumes: txt2book-data:`，不要再添加 `txt2book-data`、`/data` 挂载或第二个顶层 `volumes` 键。只需在现有 `txt2book` 服务中：把环境变量加到该服务的 `environment` 下；把证书挂载项追加到该服务现有的 `volumes` 列表末尾。不要用下面的片段替换整个服务定义：
+
+```yaml
+services:
+  txt2book:
+    environment:
+      NODE_EXTRA_CA_CERTS: /certs/calibre-ca.pem
+    volumes:
+      # 追加到现有列表；已有的 txt2book-data:/data 必须保留，不要重复添加。
+      - ./certs/calibre-ca.pem:/certs/calibre-ca.pem:ro
+```
+
+`NODE_EXTRA_CA_CERTS` 只在进程启动时读取，改完需要 `docker compose up -d` 重建容器。项目不提供跳过 TLS 校验的开关。
+
 ## HTTPS 反向代理
 
 把服务放在 Nginx、Caddy、Traefik 等反向代理后时：
@@ -396,12 +484,14 @@ location / {
 - **登录限流**：同一 IP 与同一用户名各 5 次 / 15 分钟，超限返回 `429` 与 `Retry-After`；用户名不存在时也执行一次 scrypt 校验，避免通过响应时间枚举账号；失败文案统一。
 - **封面接口限流**：抓取与上传共用同一个按 IP 的桶，默认 30 次 / 分钟（`RATE_LIMIT_PER_MIN`）。
 - **PDF 导出防护**：接口需要登录，请求体 20MB、章节/字数上限、并发 1、60 秒超时与 6 次 / 分钟按 IP 限流；字体路径只来自固定候选与环境变量，错误文案不泄露路径与堆栈。
+- **calibre-web 代理边界**：只代理已连接的单个 origin，路径、`book_id` 与格式全部白名单，不跨 origin 重定向；`CALIBRE_ALLOW_PRIVATE` 控制是否允许私网/回环地址，云元数据与链路本地地址始终拒绝；错误文案不含主机名、IP 或上游 HTML；连接尝试与推送全局串行，并分别限流。
+- **calibre-web 凭据**：密码只在服务端内存与加密配置文件中出现，接口不回显、不写日志、不进入 localStorage；配置文件使用 AES-256-GCM（密钥由 `SESSION_SECRET` 经 HKDF 派生）、权限 0600、原子写入，也可用 `CALIBRE_PERSIST_CREDENTIALS=false` 完全关闭落盘。
 - **SSRF 防护**：封面 URL 只允许 `http` / `https`；端口只允许 80/443/8080/8443 或不低于 1024 的常规端口，并排除常见内网服务端口（6379 Redis、9200/9300 Elasticsearch、27017/27018/27019 MongoDB、11211 Memcached、2375/2376 Docker、5432 PostgreSQL、3306 MySQL 等）；拒绝本机、内网、链路本地、CGNAT、组播、保留地址与 `localhost`、`*.local`、`*.internal`、`metadata` 等域名；DNS 解析后固定 IP 连接，并在每次重定向前重新校验，防止 DNS rebinding 与重定向绕过。
 - **资源限制**：封面下载默认 10MB 上限、8 秒超时、输入不超过 4000 万像素，输出最长边缩放到 1600px；本地封面上传同为 10MB 上限。
 - **CSRF**：会话 Cookie 使用 `SameSite=Strict`；带 `Origin` 头的非 GET/HEAD/OPTIONS 请求会校验同源。
 - **XSS / 点击劫持**：正文按纯文本转义后生成 XHTML，预览 iframe 使用 sandbox；所有响应附带 `Content-Security-Policy`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`。
 - **配置失败即拒绝启动**：缺少密码哈希或过短的会话密钥时服务不会裸奔启动；`AUTH_DISABLED=true` 仅用于本地开发并会打印警告。
-- **不落盘**：TXT、封面与导出文件均在内存中处理，服务端不写用户文件，也不提供上传目录。
+- **不落盘**：TXT、封面、PDF 与 calibre-web 的 TXT/EPUB 转发都在内存中处理，服务端不写用户文件，也不提供上传目录；唯一持久化的是加密后的 calibre-web 连接配置（可用 `CALIBRE_PERSIST_CREDENTIALS=false` 关闭）。
 
 ## 配置项
 
@@ -420,15 +510,32 @@ location / {
 | `TRUST_PROXY` | `false` | 是否信任反向代理的 `X-Forwarded-For` / `X-Forwarded-Proto` |
 | `PDF_FONT_PATH` | 无 | 可选，PDF 中文字体文件路径；覆盖系统候选 |
 | `PDF_FONT_FAMILY` | 无 | 可选，TTC/DFont 集合内的 PostScript 名；仅在 `PDF_FONT_PATH` 指向集合文件时需要 |
+| `CALIBRE_ALLOW_PRIVATE` | `true` | 允许连接内网/回环地址；云元数据与链路本地地址始终拒绝 |
+| `CALIBRE_PERSIST_CREDENTIALS` | `true` | 加密保存连接配置；`false` 时只保留在内存，重启失效 |
+| `CALIBRE_STORE_PATH` | `./data/calibre-connection.json` | 加密配置路径；Docker 镜像内默认为 `/data/calibre-connection.json` |
+| `CALIBRE_TIMEOUT_MS` | `15000` | 列表、封面、登录与推送预检的上游超时（毫秒） |
+| `CALIBRE_PUSH_TIMEOUT_MS` | `120000` | 上传 EPUB 的独立超时（毫秒） |
+| `CALIBRE_MAX_FILE_BYTES` | `52428800` | 单个 TXT 下载上限（字节，50MB） |
+| `CALIBRE_MAX_PUSH_BYTES` | `52428800` | 单次 EPUB 推送上限（字节，50MB） |
+| `CALIBRE_RATE_LIMIT_PER_MIN` | `120` | calibre-web 读取类接口每 IP 每分钟次数 |
+| `CALIBRE_PUSH_RATE_LIMIT_PER_MIN` | `6` | 推送每 IP 每分钟次数 |
+| `CALIBRE_CONNECT_RATE_LIMIT_PER_MIN` | `5` | 连接尝试每 IP 每分钟次数（失败也计数） |
 
 `PORT` 是容器内监听端口，默认 `3000`。`docker-compose.yml` 的 `8080:3000` 与 healthcheck 里的 `127.0.0.1:3000` 都固定写死 `3000`；修改 `PORT` 时必须同步修改这两处（并按需调整 Dockerfile 的 `EXPOSE`），否则浏览器访问与健康检查都会失败。
+
+calibre-web 的加密密钥由 `SESSION_SECRET` 派生，更换 `SESSION_SECRET` 会让整份已保存的连接配置无法解密（按未保存处理，不会报错或损坏其他数据），需要重新填写地址、账号和密码并重新连接。`CALIBRE_ALLOW_PRIVATE` 与 `CALIBRE_PERSIST_CREDENTIALS` 只有显式写 `false` 才关闭，留空视为 `true`。
 
 ## 目录结构
 
 ```text
 src/                    前端源码
   components/           展示组件（目录树、预览、封面、主题、排版、导出、登录等）
+    AppDialog.vue       通用弹窗容器（遮罩、Esc、焦点与滚动锁）
+    CalibreSettingsDialog.vue calibre-web 账户配置弹窗
+    CalibreLibraryDialog.vue  calibre-web 书库选择弹窗
+    CalibreBookRow.vue  calibre-web 单本书的导入行
   composables/          组件共享状态（认证、导入、封面、主题、排版、背景、提示）
+    useCalibre.ts       calibre-web 浏览、导入与推送状态编排
   core/                 纯逻辑
     chapterParser.ts    内置章节识别
     customRules.ts      自定义规则存储与编译
@@ -438,6 +545,7 @@ src/                    前端源码
     api.ts              前端 API 客户端
     exportFileName.ts   导出文件名清洗（Windows 保留名等）
     imageDataUrl.ts     背景字节转 data URL
+    calibre/            calibre-web OPDS 解析（feed.ts）
     render/             章节 XHTML 渲染、主题与高级排版 CSS
     converters/         格式转换器注册表
       epub/             EPUB 3（浏览器端）
@@ -445,18 +553,20 @@ src/                    前端源码
       txt/              整理版 TXT（浏览器端）
       pdf/              服务端 PDF 请求组装
   styles/               CSS 变量与全局样式
-  types/                前端类型
+  types/                前端类型（含 calibre.ts）
   App.vue               主界面装配
 server/                 后端源码
   app.ts                Fastify 实例组装
   index.ts              启动入口（读取配置并监听）
   lib/                  配置、认证、会话、限流、SSRF、图片处理
+    calibre/            calibre-web 地址策略、HTTP 客户端、登录/上传与加密配置
     pdf/                PDF 字体解析、断行、排版与书签
-  routes/               认证、封面与导出路由
+  routes/               认证、封面、导出与 calibre-web 路由
   scripts/              密码哈希脚本
 public/                 站点图标、PWA manifest 等静态资源
 tests/                  Vitest 测试与 fixtures
 docs/                   设计与计划文档
+data/                   calibre-web 加密配置（生成，已忽略）
 dist/                   前端构建产物（生成）
 server-dist/            后端编译产物（生成）
 Dockerfile              多阶段构建
@@ -473,7 +583,7 @@ npm run typecheck  # vue-tsc + tsc --noEmit
 npm run build   # 构建前端与后端
 ```
 
-测试覆盖章节解析（卷、番外、楔子、尾声混排）、章节操作与撤销、XHTML 渲染、EPUB 结构、单文件 HTML、整理版 TXT、PDF 生成与字体回退、PDF 接口限制（未登录、超限、并发、限流）、SSRF 黑名单与重定向校验、认证与会话篡改、限流以及完整的导入导出集成流程。
+测试覆盖章节解析（卷、番外、楔子、尾声混排）、章节操作与撤销、XHTML 渲染、EPUB 结构、单文件 HTML、整理版 TXT、PDF 生成与字体回退、PDF 接口限制（未登录、超限、并发、限流）、SSRF 黑名单与重定向校验、认证与会话篡改、限流以及完整的导入导出集成流程；calibre-web 部分覆盖 OPDS 解析、连接与地址策略、加密配置读写、推送预检/覆盖确认、登录与 CSRF、上游错误映射、并发与限流。
 
 ## 常见问题
 
@@ -517,6 +627,26 @@ Docker 运行镜像已内置 Noto CJK，通常不会出现。本机运行依赖�
 
 `429` 表示同一时刻已有 PDF 任务（`Retry-After: 5`）或超过 6 次 / 分钟限流（`Retry-After: 60`）；`504` 表示单次生成超过 60 秒。超时不会取消已开始的渲染：任务会继续到结束，期间并发位保持占用，因此后续请求仍可能返回 `429`。减少章节或字数、稍后重试即可；大书还会占用较多内存，建议容器限制 1GB。
 
+**calibre-web 连接提示「地址无效或不可访问」？**
+
+先检查地址是否带协议（`http://` / `https://`）、是否误带结尾 `/`、查询参数或 `#`；使用反向代理子路径时要填写完整前缀（如 `https://example.com/calibre`）。端口需为 80/443/8080/8443 或 ≥1024 且不在常见服务端口黑名单内。连接局域网或回环地址需要 `CALIBRE_ALLOW_PRIVATE=true`（默认）。使用自签证书时设置 `NODE_EXTRA_CA_CERTS` 指向 CA 文件。
+
+**能浏览书库，但导出卡片没有推送选项？**
+
+推送要求账号能通过 calibre-web 网页表单登录、具有上传/编辑权限，并且 calibre-web 已开启「允许上传」、EPUB 在允许的扩展名内。若连接是只读（网页登录失败），或当前书籍来自另一个实例，推送入口会隐藏；可在「书库」弹窗确认「已关联」的书籍与当前地址是否一致。
+
+**重启后仍要求输入 calibre-web 密码？**
+
+按顺序检查：`CALIBRE_PERSIST_CREDENTIALS` 是否为 `false`；`SESSION_SECRET` 是否更换过（换了会导致已保存配置无法解密）；Docker 是否挂载了 `/data` 命名卷且目录可写；`CALIBRE_STORE_PATH` 是否指向了非持久化路径。配置文件损坏时会被按未保存处理，原文件保留但不会自动删除。
+
+**推送超时或提示「已提交但未确认」？**
+
+大文件上传可能超过默认 120 秒，可调大 `CALIBRE_PUSH_TIMEOUT_MS` 后重试。超时或确认失败时 calibre-web 可能已经收到文件，先到书库确认再决定是否重试，避免误覆盖。calibre-web 版本升级导致登录/CSRF/上传流程变化时，推送也可能失效，此时本地下载仍可用。
+
+**Docker 里连不上同机的 calibre-web？**
+
+容器内的 `127.0.0.1` 是容器自身。若用公网域名访问且该域名在容器内无法回环到宿主机，请改用容器可达的内网地址，或让域名通过内部 DNS / hosts 解析到 calibre-web。连接成功后服务端会固定解析出的 IP，网络变更后需要「修改连接」重新保存。
+
 
 ## 已知限制
 
@@ -532,3 +662,10 @@ Docker 运行镜像已内置 Noto CJK，通常不会出现。本机运行依赖�
 - **预览不包含所有结构页**：预览覆盖正文、排版主题、卷扉页与背景，但封面页、书名页、简介页、目录页只在导出的 EPUB 中出现。
 - **墨水屏的分页策略需实机确认**：章标题设置了 `page-break-before`，个别旧阅读器可能在每章前多出一张空白页。
 - **排版配置不跨设备同步**：主题、高级排版与背景保存在浏览器本地，换浏览器或清理站点数据后需要重新设置。
+- **calibre-web 只支持本地表单登录**：LDAP、OAuth 或反向代理头登录的账号只能读取书库，不能推送；推送入口会隐藏。
+- **推送依赖模拟网页表单**：登录、CSRF token 与 `/upload` 字段随 calibre-web 版本或反向代理改动可能失效；失败只影响回传：下载并推送时本地文件已下载，仅推送时不会生成本地文件。
+- **不写回元数据**：推送只在原书下追加 EPUB，不改书名、作者、简介、封面，也不新建书目。
+- **列表不显示封面缩略图**：避免每行一次代理请求；封面只在导入时拉取。
+- **连接是全局单实例**：同一 txt2book 实例只维护一个 calibre-web 连接，所有浏览器共享；多副本部署需要各自连接，配置不跨实例同步。
+- **覆盖 EPUB 不更新体积**：calibre-web 覆盖同名格式时可能保留旧的文件大小显示，内容本身正常。
+- **连接固定 DNS 结果**：连接成功后固定一个解析出的 IP；calibre-web 迁移或 DNS 变更后需要「修改连接」重新保存。

@@ -5,6 +5,7 @@ server-dist/
 .env.local
 *.local
 coverage/
+/data/
 .superpowers/
 .DS_Store
 Thumbs.db

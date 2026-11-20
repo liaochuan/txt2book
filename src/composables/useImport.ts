@@ -2,8 +2,8 @@ import { ref, type Ref } from "vue";
 import { parseChapters } from "../core/chapterParser";
 import { loadRules, type ChapterRule } from "../core/customRules";
 import { hasMeaningfulContent, preprocessLines } from "../core/preprocess";
-import { decodeText, readTextFile, type ReadTextFileResult } from "../core/textReader";
-import type { BookMeta } from "../types/book";
+import { decodeText } from "../core/textReader";
+import type { BookMeta, BookSource, CoverAsset, Language } from "../types/book";
 import type { BookSession } from "./useBookSession";
 
 /** 界面上可选的源文件编码。`auto` 交给 jschardet 判断，其余为手动覆盖。 */
@@ -16,6 +16,16 @@ export const ENCODING_OPTIONS: ReadonlyArray<{ value: SourceEncoding; label: str
   { value: "big5", label: "Big5" },
   { value: "utf-16le", label: "UTF-16LE" },
 ];
+
+/** `importBytes` 的可选覆盖项；缺省字段沿用本地导入的默认值。 */
+export interface ImportBytesOptions {
+  /** 覆盖默认的书名、作者与语言；`language` 同时决定章节兜底标题的语言。 */
+  meta?: Partial<BookMeta>;
+  /** 外部来源；传入时强制使用 `meta.title` 作为书名。 */
+  source?: BookSource | null;
+  /** 显式传入时覆盖封面，`null` 清空旧封面；缺省沿用当前封面。 */
+  cover?: CoverAsset | null;
+}
 
 export interface UseImport {
   /** 最近一次成功导入的文件名（含扩展名），未导入时为空串。 */
@@ -31,6 +41,13 @@ export interface UseImport {
   busy: Ref<boolean>;
   error: Ref<string>;
   importFile(file: File, encoding: SourceEncoding): Promise<boolean>;
+  /** 从已读取的字节导入，供 calibre-web 等外部来源复用同一套解析流程。 */
+  importBytes(
+    bytes: Uint8Array,
+    name: string,
+    encoding: SourceEncoding,
+    options?: ImportBytesOptions,
+  ): Promise<boolean>;
   reparse(encoding: SourceEncoding, rules: ChapterRule[]): Promise<void>;
 }
 
@@ -69,31 +86,61 @@ export function useImport(session: Pick<BookSession, "loadBook" | "book">): UseI
   const busy = ref(false);
   const error = ref("");
 
-  const meta = (): BookMeta => ({
-    title: titleFromFileName(fileName.value),
-    author: "",
-    language: LANGUAGE,
-  });
-
-  /**
-   * 重新解析只重建章节；作者、简介、语言属于用户编辑过的书籍信息，必须沿用当前值。
-   * 标题仍交给 `loadBook` 的自动标题规则判断，传入当前文件名。
-   */
-  function metaForReparse(): BookMeta {
-    const current = session.book.value.meta;
-    return {
-      ...meta(),
-      author: current.author,
-      language: current.language,
-      ...(current.description === undefined ? {} : { description: current.description }),
-    };
-  }
-
   /** 解码并解析；正文为空时抛错，由调用方转成中文提示且不覆盖现有书籍。 */
-  function parseText(text: string, ruleList: ChapterRule[]) {
+  function parseText(text: string, ruleList: ChapterRule[], language: Language) {
     const lines = preprocessLines(text);
     if (!hasMeaningfulContent(lines)) throw new Error(EMPTY_ERROR);
-    return parseChapters(lines, LANGUAGE, ruleList);
+    return parseChapters(lines, language, ruleList);
+  }
+
+  /**
+   * 写入一次导入结果。调用方负责 busy/error 状态；
+   * 解码或解析失败时抛错，现有书籍保持不变。
+   */
+  function ingest(
+    bytes: Uint8Array,
+    name: string,
+    encoding: SourceEncoding,
+    options: ImportBytesOptions = {},
+  ): void {
+    const decoded = decodeText(bytes, encoding);
+    const language = options.meta?.language ?? LANGUAGE;
+    const parsed = parseText(decoded.text, rules.value, language);
+
+    const finalName = name || UNTITLED;
+    const meta: BookMeta = {
+      title: titleFromFileName(finalName),
+      author: "",
+      language,
+      ...options.meta,
+    };
+    const source = options.source ?? null;
+
+    fileName.value = finalName;
+    detectedEncoding.value = decoded.detectedEncoding;
+    usedEncoding.value = decoded.usedEncoding;
+    rawBytes.value = bytes;
+    session.loadBook(meta, parsed, meta.title, {
+      source,
+      ...(options.cover !== undefined ? { cover: options.cover } : {}),
+      ...(source ? { forceTitle: true } : {}),
+    });
+  }
+
+  /** `ingest` 的错误收口：中文提示直接展示，其余异常统一换成兜底文案。 */
+  function ingestSafely(
+    bytes: Uint8Array,
+    name: string,
+    encoding: SourceEncoding,
+    options?: ImportBytesOptions,
+  ): boolean {
+    try {
+      ingest(bytes, name, encoding, options);
+      return true;
+    } catch (cause) {
+      error.value = errorMessage(cause, PARSE_ERROR);
+      return false;
+    }
   }
 
   async function importFile(file: File, encoding: SourceEncoding): Promise<boolean> {
@@ -101,31 +148,40 @@ export function useImport(session: Pick<BookSession, "loadBook" | "book">): UseI
     busy.value = true;
     error.value = "";
     try {
-      let result: ReadTextFileResult;
+      let bytes: Uint8Array;
       try {
-        result = await readTextFile(file, encoding);
+        bytes = new Uint8Array(await file.arrayBuffer());
       } catch (cause) {
         error.value = errorMessage(cause, READ_ERROR);
         return false;
       }
-
-      const parsed = parseText(result.text, rules.value);
-      const name = file.name || UNTITLED;
-
-      fileName.value = name;
-      detectedEncoding.value = result.detectedEncoding;
-      usedEncoding.value = result.usedEncoding;
-      rawBytes.value = result.bytes;
-      session.loadBook(meta(), parsed, titleFromFileName(name));
-      return true;
-    } catch (cause) {
-      error.value = errorMessage(cause, PARSE_ERROR);
-      return false;
+      return ingestSafely(bytes, file.name || UNTITLED, encoding);
     } finally {
       busy.value = false;
     }
   }
 
+  async function importBytes(
+    bytes: Uint8Array,
+    name: string,
+    encoding: SourceEncoding,
+    options: ImportBytesOptions = {},
+  ): Promise<boolean> {
+    if (busy.value) return false;
+    busy.value = true;
+    error.value = "";
+    try {
+      return ingestSafely(bytes, name, encoding, options);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  /**
+   * 重新解析只重建章节；作者、简介、语言属于用户编辑过的书籍信息，必须沿用当前值。
+   * 有外部来源时书名也沿用当前值（来源书名可能经过用户编辑），否则仍交给
+   * `loadBook` 的自动标题规则判断，传入当前文件名。
+   */
   async function reparse(encoding: SourceEncoding, nextRules: ChapterRule[]): Promise<void> {
     if (busy.value) return;
     const bytes = rawBytes.value;
@@ -137,13 +193,19 @@ export function useImport(session: Pick<BookSession, "loadBook" | "book">): UseI
     busy.value = true;
     error.value = "";
     try {
+      const current = session.book.value;
+      const source = current.source ?? null;
       const decoded = decodeText(bytes, encoding);
-      const parsed = parseText(decoded.text, nextRules);
+      const parsed = parseText(decoded.text, nextRules, current.meta.language);
+      const meta: BookMeta = {
+        ...current.meta,
+        title: source ? current.meta.title : titleFromFileName(fileName.value),
+      };
 
       rules.value = [...nextRules];
       detectedEncoding.value = decoded.detectedEncoding;
       usedEncoding.value = decoded.usedEncoding;
-      session.loadBook(metaForReparse(), parsed, titleFromFileName(fileName.value));
+      session.loadBook(meta, parsed, meta.title, { source });
     } catch (cause) {
       error.value = errorMessage(cause, PARSE_ERROR);
     } finally {
@@ -160,6 +222,7 @@ export function useImport(session: Pick<BookSession, "loadBook" | "book">): UseI
     busy,
     error,
     importFile,
+    importBytes,
     reparse,
   };
 }

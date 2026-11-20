@@ -4,6 +4,8 @@ node_modules
 dist
 server-dist
 coverage
+# calibre-web 凭据存储目录，不能进入构建上下文。
+data
 tests
 docs
 .superpowers

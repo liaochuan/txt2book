@@ -1,8 +1,22 @@
 import { mount } from "@vue/test-utils";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { nextTick } from "vue";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { nextTick, ref } from "vue";
 import UploadPanel from "../src/components/UploadPanel.vue";
 import { useBookSession } from "../src/composables/useBookSession";
+import type { UseImport } from "../src/composables/useImport";
+
+const useImportSpy = vi.hoisted(() => vi.fn());
+
+vi.mock("../src/composables/useImport", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/composables/useImport")>();
+  return {
+    ...actual,
+    useImport: (...args: Parameters<typeof actual.useImport>) => {
+      useImportSpy();
+      return actual.useImport(...args);
+    },
+  };
+});
 
 const GB18030_SAMPLE = new Uint8Array([
   0xb5, 0xda, 0xd2, 0xbb, 0xd5, 0xc2, 0x20, 0xbf, 0xaa, 0xca, 0xbc, 0x0a, 0xd5, 0xfd, 0xce,
@@ -12,6 +26,10 @@ const GB18030_SAMPLE = new Uint8Array([
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+beforeEach(() => {
+  useImportSpy.mockClear();
 });
 
 function mountPanel() {
@@ -230,5 +248,33 @@ describe("UploadPanel", () => {
     expect(wrapper.get('[data-test="error"]').text()).toContain("正文");
     expect(wrapper.get('[data-test="file-name"]').text()).toBe("ok.txt");
     expect(session.book.value.chapters[0].title).toBe("第一章 开始");
+  });
+
+  it("uses an injected importer without creating an internal instance", async () => {
+    const session = useBookSession();
+    const importer: UseImport = {
+      fileName: ref(""),
+      detectedEncoding: ref(null),
+      usedEncoding: ref(""),
+      rawBytes: ref(null),
+      rules: ref([]),
+      busy: ref(false),
+      error: ref(""),
+      importFile: vi.fn(async () => true),
+      importBytes: vi.fn(async () => true),
+      reparse: vi.fn(async () => {}),
+    };
+    const wrapper = mount(UploadPanel, {
+      props: { session, rules: [], importer },
+    });
+    expect(useImportSpy).not.toHaveBeenCalled();
+
+    const file = new File(["第一章 开始\n正文"], "injected.txt");
+    await pickFile(wrapper, file);
+
+    expect(importer.importFile).toHaveBeenCalledTimes(1);
+    expect(importer.importFile).toHaveBeenCalledWith(file, "auto");
+    expect(useImportSpy).not.toHaveBeenCalled();
+    expect(session.hasBook.value).toBe(false);
   });
 });

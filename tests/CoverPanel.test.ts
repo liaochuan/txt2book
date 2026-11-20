@@ -1,9 +1,23 @@
 import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { nextTick } from "vue";
+import { nextTick, ref } from "vue";
 import CoverPanel from "../src/components/CoverPanel.vue";
 import { useBookSession } from "../src/composables/useBookSession";
+import type { UseCover } from "../src/composables/useCover";
 import { ApiError, api } from "../src/core/api";
+
+const useCoverSpy = vi.hoisted(() => vi.fn());
+
+vi.mock("../src/composables/useCover", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/composables/useCover")>();
+  return {
+    ...actual,
+    useCover: (...args: Parameters<typeof actual.useCover>) => {
+      useCoverSpy();
+      return actual.useCover(...args);
+    },
+  };
+});
 
 vi.mock("../src/core/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/core/api")>();
@@ -27,6 +41,7 @@ let urlSequence = 0;
 
 beforeEach(() => {
   urlSequence = 0;
+  useCoverSpy.mockClear();
   vi.mocked(api.coverFromUrl).mockReset();
   vi.mocked(api.coverFromFile).mockReset();
   vi.spyOn(URL, "createObjectURL").mockImplementation(() => {
@@ -49,6 +64,21 @@ function mountPanel() {
   const session = useBookSession();
   const wrapper = mount(CoverPanel, { props: { session } });
   return { session, wrapper };
+}
+
+function fakeController(): UseCover {
+  return {
+    cover: ref(null),
+    previewUrl: ref(""),
+    busy: ref(false),
+    error: ref(""),
+    fromUrl: vi.fn(async () => true),
+    fromFile: vi.fn(async () => true),
+    prepare: vi.fn(async () => ({ png: new Uint8Array(), width: 0, height: 0 })),
+    fromBlob: vi.fn(async () => true),
+    clear: vi.fn(),
+    dispose: vi.fn(),
+  };
 }
 
 async function pickFile(
@@ -253,5 +283,41 @@ describe("CoverPanel", () => {
     expect(wrapper.find('[data-test="cover-preview"]').exists()).toBe(false);
     expect(wrapper.get('[data-test="cover-size"]').text()).toBe("PNG 300×400");
     expect(wrapper.find('[data-test="cover-empty"]').exists()).toBe(false);
+  });
+
+  it("uses an injected controller for fetch and clear actions", async () => {
+    const session = useBookSession();
+    const controller = fakeController();
+    controller.cover.value = {
+      png: new Uint8Array(PNG_BYTES),
+      width: 300,
+      height: 400,
+    };
+    const wrapper = mount(CoverPanel, {
+      props: { session, controller },
+    });
+    expect(useCoverSpy).not.toHaveBeenCalled();
+
+    await wrapper.get('[data-test="cover-url"]').setValue(" https://example.com/a.png ");
+    await wrapper.get('[data-test="fetch-cover"]').trigger("click");
+
+    expect(controller.fromUrl).toHaveBeenCalledTimes(1);
+    expect(controller.fromUrl).toHaveBeenCalledWith("https://example.com/a.png");
+    expect(api.coverFromUrl).not.toHaveBeenCalled();
+
+    await wrapper.get('[data-test="clear-cover"]').trigger("click");
+
+    expect(controller.clear).toHaveBeenCalledTimes(1);
+    expect(useCoverSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not dispose an injected controller on unmount", () => {
+    const session = useBookSession();
+    const controller = fakeController();
+    const wrapper = mount(CoverPanel, { props: { session, controller } });
+
+    wrapper.unmount();
+
+    expect(controller.dispose).not.toHaveBeenCalled();
   });
 });

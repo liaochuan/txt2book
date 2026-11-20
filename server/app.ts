@@ -6,9 +6,11 @@ import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { registerAuthGuard } from "./lib/authGuard.js";
+import { createCalibreService, type CalibreService } from "./lib/calibre/service.js";
 import type { AppConfig } from "./lib/config.js";
 import { isApiPath, normalizeRequestPath } from "./lib/requestPath.js";
 import { registerAuthRoutes } from "./routes/auth.js";
+import { registerCalibreRoutes } from "./routes/calibre.js";
 import { MAX_COVER_UPLOAD_BYTES, registerCoverRoutes } from "./routes/cover.js";
 import { registerExportRoutes, type ExportRouteDeps } from "./routes/export.js";
 
@@ -71,6 +73,11 @@ export interface BuildServerOptions {
   distDir?: string;
   /** 覆盖 PDF 导出依赖（渲染器与时钟），仅用于测试。 */
   exportDeps?: ExportRouteDeps;
+  /** 覆盖 calibre-web 依赖（service 与限流时钟），仅用于测试。 */
+  calibreDeps?: {
+    service?: CalibreService;
+    now?: () => number;
+  };
 }
 
 /**
@@ -83,6 +90,10 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   const app = Fastify({
     logger: false,
     trustProxy: config.trustProxy,
+    // Fastify 默认 `removeAdditional: true` 会静默丢弃 schema 之外的字段。
+    // 本项目的路由用 `additionalProperties: false` 表达「拒绝多余字段」，
+    // 因此关闭自动剔除，让多余字段真正变成校验错误（如 calibre 连接 body）。
+    ajv: { customOptions: { removeAdditional: false } },
   });
 
   // 安全头必须最先注册，确保后续所有路由（含静态与 404）都带上。
@@ -134,14 +145,18 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   // 会话 Cookie 的读取与序列化；认证路由依赖 `request.cookies` / `reply.setCookie`。
   app.register(cookie);
 
-  // 封面本地上传：单文件 10MB 上限，与设计文档 §12.3 一致。
+  // 封面本地上传：单文件上限取封面与 calibre 推送的较大值，保证推送大文件不被全局插件拦截；
+  // 每个路由仍通过 `request.file({ limits })` 声明自己的实际上限（封面 10MB、推送可配置）。
   app.register(multipart, {
     limits: {
-      fileSize: MAX_COVER_UPLOAD_BYTES,
+      fileSize: Math.max(MAX_COVER_UPLOAD_BYTES, config.calibreMaxPushBytes),
       files: 1,
       parts: 8,
     },
   });
+
+  // calibre-web 集成：进程内单个连接，登出时清理。
+  const calibreService = options.calibreDeps?.service ?? createCalibreService(config);
 
   // 全局 `/api` 守卫必须在业务路由之前注册，才能在 `onRequest` 阶段覆盖它们。
   registerAuthGuard(app, config);
@@ -150,13 +165,18 @@ export function buildServer(config: AppConfig, options: BuildServerOptions = {})
   app.get("/api/health", async () => ({ ok: true }));
 
   // 认证路由同步注册在根实例上；其 Origin 校验 hook 同时覆盖后续注册的 POST 路由。
-  void registerAuthRoutes(app, config);
+  void registerAuthRoutes(app, config, { onLogout: () => calibreService.clearLive() });
 
   // 封面抓取/转换路由；认证与限流在守卫和路由内完成。
   void registerCoverRoutes(app, config);
 
   // PDF 导出：认证由全局守卫覆盖，限流、并发、超时与内容上限在路由内处理。
   void registerExportRoutes(app, config, options.exportDeps);
+
+  // calibre-web 书库：认证由全局守卫覆盖，限流、参数校验与错误映射在路由内完成。
+  void registerCalibreRoutes(app, config, calibreService, {
+    ...(options.calibreDeps?.now === undefined ? {} : { now: options.calibreDeps.now }),
+  });
 
   // 前端构建产物：`wildcard: false` 只为启动时已存在的文件注册路由，
   // 不提供目录列表；未知非 API 路径由 404 处理器回退到 index.html。

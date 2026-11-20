@@ -5,13 +5,16 @@ import {
   measureImageSize,
   useCover,
   type ImageSize,
+  type UseCover,
 } from "../composables/useCover";
 
-const props = defineProps<{ session: BookSession }>();
+const props = defineProps<{ session: BookSession; controller?: UseCover }>();
 
-const { cover, previewUrl, busy, error, fromUrl, fromFile, clear, dispose } = useCover(
-  props.session,
-);
+const controller = props.controller ?? useCover(props.session);
+// 注入了外部 controller 时由父级负责释放；只有自己创建的才在卸载时 dispose。
+const ownsController = props.controller === undefined;
+const { cover, previewUrl, busy, error, fromUrl, fromFile, clear, dispose } =
+  controller;
 
 const URL_PROTOCOL_ERROR = "仅支持 http/https 图片地址";
 
@@ -83,7 +86,9 @@ function onClear(): void {
   clear();
 }
 
-onBeforeUnmount(dispose);
+onBeforeUnmount(() => {
+  if (ownsController) dispose();
+});
 </script>
 
 <template>

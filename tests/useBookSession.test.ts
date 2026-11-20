@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { useBookSession } from "../src/composables/useBookSession";
-import type { CoverAsset } from "../src/types/book";
+import type { BookSource, CoverAsset } from "../src/types/book";
 
 const COVER: CoverAsset = {
   png: new Uint8Array([137, 80, 78, 71]),
@@ -10,6 +10,25 @@ const COVER: CoverAsset = {
 };
 
 const META = { title: "书", author: "", language: "zh-CN" as const };
+
+const SOURCE: BookSource = {
+  kind: "calibre-web",
+  origin: "https://calibre.example.com",
+  bookId: 42,
+  title: "书",
+  formats: ["TXT"],
+};
+
+const metaA = { title: "A", author: "", language: "zh-CN" as const };
+const metaB = { title: "B", author: "", language: "zh-CN" as const };
+const parsedA = {
+  volumes: [],
+  chapters: [{ id: "a1", title: "甲", kind: "chapter" as const, lines: ["a"], volumeId: null }],
+};
+const parsedB = {
+  volumes: [],
+  chapters: [{ id: "b1", title: "乙", kind: "chapter" as const, lines: ["b"], volumeId: null }],
+};
 
 function seed() {
   const s = useBookSession();
@@ -450,5 +469,38 @@ describe("useBookSession", () => {
     expect(s.selectedId.value).toBeNull();
     expect(s.canUndo.value).toBe(false);
     expect(s.version.value).toBe(before + 1);
+  });
+
+  it("stores and restores the book source with undo", () => {
+    const session = useBookSession();
+    session.loadBook(metaA, parsedA, "A");
+    session.loadBook(metaB, parsedB, "B", { source: SOURCE });
+    expect(session.book.value.source).toEqual(SOURCE);
+    session.undo();
+    expect(session.book.value.source).toBeNull();
+  });
+
+  it("clears the cover when cover: null is passed", () => {
+    const session = useBookSession();
+    session.loadBook(metaA, parsedA, "A", { cover: COVER });
+    session.loadBook(metaB, parsedB, "B", { cover: null });
+    expect(session.book.value.cover).toBeNull();
+  });
+
+  it("forceTitle overrides a user-edited title", () => {
+    const session = useBookSession();
+    session.loadBook(metaA, parsedA, "A");
+    session.updateMeta({ title: "手改" });
+    session.loadBook(metaB, parsedB, "calibre 标题", { forceTitle: true });
+    expect(session.book.value.meta.title).toBe("calibre 标题");
+  });
+
+  it("addSourceFormat updates formats without a new undo entry", () => {
+    const session = useBookSession();
+    session.loadBook(metaA, parsedA, "A", { source: { ...SOURCE, formats: ["TXT"] } });
+    const undoBefore = session.canUndo.value;
+    session.addSourceFormat("EPUB");
+    expect(session.book.value.source?.formats).toEqual(["TXT", "EPUB"]);
+    expect(session.canUndo.value).toBe(undoBefore);
   });
 });

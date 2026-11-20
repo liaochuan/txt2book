@@ -33,6 +33,11 @@ COPY --from=builder /app/server-dist ./server-dist
 # 字体文件固定在 /usr/share/fonts/noto/，server/lib/pdf/fonts.ts 会按该路径探测。
 RUN apk add --no-cache font-noto-cjk
 
+# calibre-web 凭据存储目录：由 compose 挂载命名卷持久化。
+# 预先创建并交给 node 用户，避免非 root 运行时无法写入。
+RUN mkdir -p /data && chown node:node /data
+ENV CALIBRE_STORE_PATH=/data/calibre-connection.json
+
 # 非 root 运行；node:22-alpine 自带 uid/gid 1000 的 node 用户。
 USER node
 

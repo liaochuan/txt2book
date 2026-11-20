@@ -1,9 +1,13 @@
 import { enableAutoUnmount, mount, type VueWrapper } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App.vue";
+import CalibreLibraryDialog from "../src/components/CalibreLibraryDialog.vue";
 import ChapterTree from "../src/components/ChapterTree.vue";
+import CoverPanel from "../src/components/CoverPanel.vue";
 import { useAuth } from "../src/composables/useAuth";
 import { useBookSession } from "../src/composables/useBookSession";
+import type { UseCalibre } from "../src/composables/useCalibre";
+import type { UseCover } from "../src/composables/useCover";
 import { converterRegistry } from "../src/core/converters";
 import type { ConvertHooks, ConvertOptions } from "../src/core/converters/types";
 import { defaultLayoutFor } from "../src/core/render/layout";
@@ -42,6 +46,111 @@ function seedSession(title = "测试书") {  const session = useBookSession();
     title,
   );
   return session;
+}
+
+/** 带 calibre-web 来源的最小书籍，便于测试推送。 */
+function seedLinkedSession(title = "测试书", formats: string[] = ["TXT"]) {
+  const session = useBookSession();
+  session.loadBook(
+    { title, author: "作者", language: "zh-CN" },
+    {
+      volumes: [],
+      chapters: [
+        { id: "c1", title: "第一章", kind: "chapter", lines: ["甲"], volumeId: null },
+        { id: "c2", title: "第二章", kind: "chapter", lines: ["乙"], volumeId: null },
+      ],
+    },
+    title,
+    {
+      source: {
+        kind: "calibre-web",
+        origin: "https://calibre.example.com",
+        bookId: 42,
+        title,
+        formats: [...formats],
+      },
+    },
+  );
+  return session;
+}
+
+const CALIBRE_BASE_URL = "https://calibre.example.com/calibre";
+const EMPTY_FEED =
+  '<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>书库</title></feed>';
+
+interface CalibreApiStub {
+  pushCalls: number;
+}
+
+/** 已连接且可推送的 calibre-web 会话；`pushStatus` 非 2xx 时模拟推送失败。 */
+function stubCalibreApi(
+  options: {
+    auth?: () => boolean;
+    pushStatus?: number;
+    pushCode?: string;
+    pushMessage?: string;
+  } = {},
+): CalibreApiStub {
+  const state: CalibreApiStub = { pushCalls: 0 };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string) => {
+      if (input === "/api/auth/me") {
+        if (options.auth && !options.auth()) {
+          return jsonResponse(
+            { error: { code: "UNAUTHORIZED", message: "请先登录" } },
+            401,
+          );
+        }
+        return jsonResponse({ authenticated: true, username: "admin" });
+      }
+      if (input === "/api/auth/logout") return new Response(null, { status: 204 });
+      if (input === "/api/calibre/session") {
+        return jsonResponse({
+          connected: true,
+          saved: true,
+          baseUrl: CALIBRE_BASE_URL,
+          username: "reader",
+          canPush: true,
+        });
+      }
+      if (input.startsWith("/api/calibre/feed")) {
+        return new Response(EMPTY_FEED, {
+          status: 200,
+          headers: { "content-type": "application/atom+xml" },
+        });
+      }
+      if (input === "/api/calibre/books/42/epub") {
+        state.pushCalls += 1;
+        if (options.pushStatus !== undefined) {
+          return jsonResponse(
+            {
+              error: {
+                code: options.pushCode ?? "CALIBRE_UNREACHABLE",
+                message: options.pushMessage ?? "无法连接",
+              },
+            },
+            options.pushStatus,
+          );
+        }
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse({ error: { code: "NOT_FOUND", message: "未找到" } }, 404);
+    }),
+  );
+  return state;
+}
+
+/** 读取 App 内部传给书库弹窗的 composable，用于断言登出后的本地清理。 */
+function calibreFrom(wrapper: VueWrapper): UseCalibre {
+  const dialog = wrapper.findComponent(CalibreLibraryDialog);
+  if (!dialog.exists()) throw new Error("书库弹窗未打开");
+  return dialog.props("calibre") as UseCalibre;
+}
+
+/** 读取 App 内部传给 CoverPanel 的共享 controller，用于断言释放行为。 */
+function coverFrom(wrapper: VueWrapper): UseCover {
+  return wrapper.findComponent(CoverPanel).props("controller") as UseCover;
 }
 
 /** 三章、无卷的书籍，用于验证多次删除后的撤销失效。 */
@@ -521,6 +630,436 @@ describe("App", () => {
       converter.convert = originalConvert;
       urls.restore();
     }
+  });
+
+  it("pushes the exported EPUB to the linked library and toasts it", async () => {
+    const calibreApi = stubCalibreApi();
+    const exportStub = stubExport();
+
+    try {
+      const wrapper = mount(App, { props: { session: seedLinkedSession() } });
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+      );
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="push-mode"]').exists()).toBe(true),
+      );
+      expect(
+        (wrapper.get('[data-test="push-mode"]').element as HTMLSelectElement).value,
+      ).toBe("download-and-push");
+
+      await wrapper.get('[data-test="export"]').trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find(".toast-success").exists()).toBe(true));
+      expect(calibreApi.pushCalls).toBe(1);
+      expect(exportStub.downloads).toHaveLength(1);
+      const toast = wrapper.get(".toast-success").text();
+      expect(toast).toContain("已推送到 Calibre-Web「测试书」");
+      expect(toast).not.toContain("已导出");
+
+      // 推送成功后 source 增加 EPUB：默认推送方式回到「不推送」并显示覆盖警告。
+      await vi.waitFor(() =>
+        expect(
+          (wrapper.get('[data-test="push-mode"]').element as HTMLSelectElement).value,
+        ).toBe("off"),
+      );
+      expect(wrapper.find('[data-test="push-overwrite-warning"]').exists()).toBe(true);
+
+      await vi.waitFor(
+        () => expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock"),
+        { timeout: 2000 },
+      );
+    } finally {
+      exportStub.restore();
+    }
+  });
+
+  it("keeps the download when pushing to the library fails", async () => {
+    stubCalibreApi({
+      pushStatus: 502,
+      pushCode: "CALIBRE_UNREACHABLE",
+      pushMessage: "上游不可达",
+    });
+    const exportStub = stubExport();
+
+    try {
+      const wrapper = mount(App, { props: { session: seedLinkedSession() } });
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+      );
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="push-mode"]').exists()).toBe(true),
+      );
+
+      await wrapper.get('[data-test="export"]').trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find(".toast-error").exists()).toBe(true));
+      expect(wrapper.get(".toast-error").text()).toContain(
+        "已下载，但推送失败：无法连接 calibre-web 服务。",
+      );
+      expect(exportStub.downloads).toHaveLength(1);
+
+      await vi.waitFor(
+        () => expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock"),
+        { timeout: 2000 },
+      );
+    } finally {
+      exportStub.restore();
+    }
+  });
+
+  it("opens the calibre library and settings dialogs from the header", async () => {
+    stubCalibreApi();
+    const wrapper = mount(App, { props: { session: seedSession() } });
+
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+    );
+    expect(document.body.querySelector('[data-test="dialog"]')).toBeNull();
+
+    await wrapper.get('[data-test="open-settings"]').trigger("click");
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[data-test="dialog"]')?.textContent).toContain(
+        "Calibre-Web 设置",
+      ),
+    );
+
+    await wrapper.get('[data-test="open-library"]').trigger("click");
+    await vi.waitFor(() => {
+      const dialogs = document.body.querySelectorAll('[data-test="dialog"]');
+      expect(dialogs).toHaveLength(1);
+      expect(dialogs[0]?.textContent).toContain("Calibre-Web 书库");
+    });
+
+    (document.body.querySelector('[data-test="dialog-close"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(document.body.querySelector('[data-test="dialog"]')).toBeNull());
+  });
+
+  it("toasts an imported book and closes the library dialog", async () => {
+    stubCalibreApi();
+    const wrapper = mount(App, { props: { session: seedSession() } });
+
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+    );
+    await wrapper.get('[data-test="open-library"]').trigger("click");
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[data-test="dialog"]')).not.toBeNull(),
+    );
+
+    const calibre = calibreFrom(wrapper);
+    calibre.books.value = [
+      {
+        id: 7,
+        title: "书库书",
+        authors: ["作者"],
+        summary: "",
+        formats: ["TXT"],
+        hasCover: false,
+      },
+    ];
+    vi.spyOn(calibre, "importBook").mockResolvedValue(true);
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[data-test="calibre-import"]')).not.toBeNull(),
+    );
+
+    (document.body.querySelector('[data-test="calibre-import"]') as HTMLButtonElement).click();
+
+    await vi.waitFor(() => expect(wrapper.find(".toast-success").exists()).toBe(true));
+    expect(wrapper.get(".toast-success").text()).toContain("已导入《书库书》");
+    expect(document.body.querySelector('[data-test="dialog"]')).toBeNull();
+  });
+
+  it("does not download a local file in push-only mode", async () => {
+    const calibreApi = stubCalibreApi();
+    const exportStub = stubExport();
+
+    try {
+      const wrapper = mount(App, { props: { session: seedLinkedSession() } });
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+      );
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="push-mode"]').exists()).toBe(true),
+      );
+
+      await wrapper.get('[data-test="push-mode"]').setValue("push-only");
+      await wrapper.get('[data-test="export"]').trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find(".toast-success").exists()).toBe(true));
+      expect(calibreApi.pushCalls).toBe(1);
+      expect(exportStub.downloads).toHaveLength(0);
+      expect(wrapper.get(".toast-success").text()).toContain("已推送到 Calibre-Web「测试书」");
+    } finally {
+      exportStub.restore();
+    }
+  });
+
+  it("reports a push-only failure without claiming a local file", async () => {
+    stubCalibreApi({
+      pushStatus: 502,
+      pushCode: "CALIBRE_UNREACHABLE",
+      pushMessage: "上游不可达",
+    });
+    const exportStub = stubExport();
+
+    try {
+      const wrapper = mount(App, { props: { session: seedLinkedSession() } });
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+      );
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="push-mode"]').exists()).toBe(true),
+      );
+
+      await wrapper.get('[data-test="push-mode"]').setValue("push-only");
+      await wrapper.get('[data-test="export"]').trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find(".toast-error").exists()).toBe(true));
+      expect(wrapper.get(".toast-error").text()).toContain(
+        "推送失败，未生成本地文件：无法连接 calibre-web 服务。可切换到「下载并推送」后重试",
+      );
+      expect(exportStub.downloads).toHaveLength(0);
+    } finally {
+      exportStub.restore();
+    }
+  });
+
+  it("reports a cancelled push-only overwrite without a local file", async () => {
+    stubCalibreApi({ pushStatus: 409, pushCode: "CALIBRE_EPUB_EXISTS" });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const exportStub = stubExport();
+
+    try {
+      const wrapper = mount(App, { props: { session: seedLinkedSession() } });
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+      );
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="push-mode"]').exists()).toBe(true),
+      );
+
+      await wrapper.get('[data-test="push-mode"]').setValue("push-only");
+      await wrapper.get('[data-test="export"]').trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find(".toast").exists()).toBe(true));
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(wrapper.get(".toast").text()).toContain("已取消推送，未生成本地文件");
+      expect(exportStub.downloads).toHaveLength(0);
+    } finally {
+      exportStub.restore();
+    }
+  });
+
+  it("reports an unexpected push-only failure with clean punctuation", async () => {
+    stubCalibreApi();
+    const exportStub = stubExport();
+
+    try {
+      const wrapper = mount(App, { props: { session: seedLinkedSession() } });
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+      );
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="push-mode"]').exists()).toBe(true),
+      );
+
+      await wrapper.get('[data-test="open-library"]').trigger("click");
+      await vi.waitFor(() =>
+        expect(document.body.querySelector('[data-test="dialog"]')).not.toBeNull(),
+      );
+      const calibre = calibreFrom(wrapper);
+      (document.body.querySelector('[data-test="dialog-close"]') as HTMLButtonElement).click();
+      await vi.waitFor(() => expect(document.body.querySelector('[data-test="dialog"]')).toBeNull());
+
+      vi.spyOn(calibre, "push").mockRejectedValue(new Error("boom"));
+      await wrapper.get('[data-test="push-mode"]').setValue("push-only");
+      await wrapper.get('[data-test="export"]').trigger("click");
+
+      await vi.waitFor(() => expect(wrapper.find(".toast-error").exists()).toBe(true));
+      expect(wrapper.get(".toast-error").text()).toContain(
+        "推送失败，未生成本地文件：请稍后重试。可切换到「下载并推送」后重试",
+      );
+      expect(exportStub.downloads).toHaveLength(0);
+    } finally {
+      exportStub.restore();
+    }
+  });
+
+  it("defaults to no push when the linked book already has an EPUB", async () => {
+    stubCalibreApi();
+    const wrapper = mount(App, {
+      props: { session: seedLinkedSession("测试书", ["TXT", "EPUB"]) },
+    });
+
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+    );
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="push-mode"]').exists()).toBe(true),
+    );
+
+    expect(
+      (wrapper.get('[data-test="push-mode"]').element as HTMLSelectElement).value,
+    ).toBe("off");
+    expect(wrapper.find('[data-test="push-overwrite-warning"]').exists()).toBe(true);
+  });
+
+  it("clears a stale calibre notice when a dialog opens but keeps errors", async () => {
+    stubCalibreApi();
+    const wrapper = mount(App, { props: { session: seedSession() } });
+
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+    );
+    await wrapper.get('[data-test="open-library"]').trigger("click");
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[data-test="dialog"]')).not.toBeNull(),
+    );
+    const calibre = calibreFrom(wrapper);
+    (document.body.querySelector('[data-test="dialog-close"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(document.body.querySelector('[data-test="dialog"]')).toBeNull());
+
+    calibre.notice.value = "已推送到 calibre-web。";
+    calibre.error.value = "连接错误";
+    await wrapper.get('[data-test="open-settings"]').trigger("click");
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[data-test="dialog"]')).not.toBeNull(),
+    );
+
+    expect(calibre.notice.value).toBe("");
+    expect(document.body.querySelector('[data-test="calibre-notice"]')).toBeNull();
+    expect(calibre.error.value).toBe("连接错误");
+    expect(document.body.querySelector('[data-test="calibre-error"]')?.textContent).toContain(
+      "连接错误",
+    );
+  });
+
+  it("clears the calibre state on logout", async () => {
+    stubCalibreApi();
+    const wrapper = mount(App, { props: { session: seedLinkedSession() } });
+
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+    );
+    await wrapper.get('[data-test="open-library"]').trigger("click");
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[data-test="calibre-linked-book"]')).not.toBeNull(),
+    );
+    const calibre = calibreFrom(wrapper);
+    await vi.waitFor(() => expect(calibre.info.value?.connected).toBe(true));
+
+    await wrapper.get('[data-test="logout"]').trigger("click");
+
+    await vi.waitFor(() => expect(wrapper.find("form.login-card").exists()).toBe(true));
+    expect(document.body.querySelector('[data-test="dialog"]')).toBeNull();
+    expect(calibre.info.value).toBeNull();
+    expect(calibre.books.value).toEqual([]);
+    expect(calibre.error.value).toBe("");
+  });
+
+  it("clears the calibre state when a request gets 401", async () => {
+    let authenticated = true;
+    stubCalibreApi({ auth: () => authenticated });
+    const wrapper = mount(App, { props: { session: seedLinkedSession() } });
+
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+    );
+    await wrapper.get('[data-test="open-library"]').trigger("click");
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[data-test="calibre-linked-book"]')).not.toBeNull(),
+    );
+    const calibre = calibreFrom(wrapper);
+    const cover = coverFrom(wrapper);
+    const disposeCover = vi.spyOn(cover, "dispose");
+    await vi.waitFor(() => expect(calibre.info.value?.connected).toBe(true));
+
+    authenticated = false;
+    await useAuth().check();
+
+    await vi.waitFor(() => expect(wrapper.find("form.login-card").exists()).toBe(true));
+    expect(document.body.querySelector('[data-test="dialog"]')).toBeNull();
+    expect(disposeCover).toHaveBeenCalled();
+    expect(calibre.info.value).toBeNull();
+    expect(calibre.books.value).toEqual([]);
+    expect(calibre.error.value).toBe("");
+  });
+
+  it("aborts an in-flight cover request on logout and keeps the reset session empty", async () => {
+    let resolveCover: ((response: Response) => void) | undefined;
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string, init?: RequestInit) => {
+        if (input === "/api/auth/me") {
+          return Promise.resolve(jsonResponse({ authenticated: true, username: "admin" }));
+        }
+        if (input === "/api/auth/logout") {
+          return Promise.resolve(new Response(null, { status: 204 }));
+        }
+        if (input === "/api/calibre/session") {
+          return Promise.resolve(
+            jsonResponse({ connected: false, saved: false }),
+          );
+        }
+        if (input === "/api/cover/from-url") {
+          if (init?.signal) signals.push(init.signal);
+          return new Promise<Response>((resolve) => {
+            resolveCover = resolve;
+          });
+        }
+        return Promise.resolve(
+          jsonResponse({ error: { code: "NOT_FOUND", message: "未找到" } }, 404),
+        );
+      }),
+    );
+
+    const session = seedSession();
+    const wrapper = mount(App, { props: { session } });
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+    );
+
+    const cover = coverFrom(wrapper);
+    const disposeCover = vi.spyOn(cover, "dispose");
+
+    await wrapper.get('[data-test="cover-url"]').setValue("https://example.com/a.png");
+    await wrapper.get('[data-test="fetch-cover"]').trigger("click");
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+
+    await wrapper.get('[data-test="logout"]').trigger("click");
+    await vi.waitFor(() => expect(wrapper.find("form.login-card").exists()).toBe(true));
+
+    expect(disposeCover).toHaveBeenCalled();
+    expect(signals[0]?.aborted).toBe(true);
+
+    // 迟到的响应即使到达，也不能写回已清空的会话或重建预览。
+    resolveCover?.(
+      new Response(new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], { type: "image/png" }), {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      }),
+    );
+    await settle(wrapper);
+
+    expect(session.book.value.cover).toBeNull();
+  });
+
+  it("releases the shared cover controller when the app unmounts", async () => {
+    stubSessionApi(true);
+    const wrapper = mount(App, { props: { session: seedSession() } });
+
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+    );
+
+    const cover = coverFrom(wrapper);
+    const disposeCover = vi.spyOn(cover, "dispose");
+
+    wrapper.unmount();
+
+    expect(disposeCover).toHaveBeenCalledTimes(1);
   });
 
   it("exports PDF through the server converter and names the file .pdf", async () => {

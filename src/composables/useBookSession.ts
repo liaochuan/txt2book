@@ -7,7 +7,23 @@ import {
   type History,
 } from "../core/chapterOps";
 import type { ParsedBook } from "../core/chapterParser";
-import type { BookMeta, BookModel, Chapter, CoverAsset, Volume } from "../types/book";
+import type {
+  BookMeta,
+  BookModel,
+  BookSource,
+  Chapter,
+  CoverAsset,
+  Volume,
+} from "../types/book";
+
+export interface LoadBookOptions {
+  /** 书籍来源；缺省为 null，调用方需要保留时必须显式传入。 */
+  source?: BookSource | null;
+  /** 显式传入时覆盖当前封面，`null` 表示清空；缺省沿用当前封面。 */
+  cover?: CoverAsset | null;
+  /** 为 true 时忽略用户改过的书名，强制使用请求的书名。 */
+  forceTitle?: boolean;
+}
 
 export interface BookSession {
   book: Ref<BookModel>;
@@ -20,7 +36,7 @@ export interface BookSession {
   hasBook: ComputedRef<boolean>;
   /** 每次书籍变更（含撤销、重载、重置）都会 +1，供 Toast 判断能否安全撤销。 */
   version: Ref<number>;
-  loadBook(meta: BookMeta, parsed: ParsedBook, title: string): void;
+  loadBook(meta: BookMeta, parsed: ParsedBook, title: string, options?: LoadBookOptions): void;
   select(id: string | null): void;
   selectVolume(id: string): void;
   rename(id: string, title: string): void;
@@ -31,6 +47,8 @@ export interface BookSession {
   reset(): void;
   setCover(cover: CoverAsset | null): void;
   updateMeta(patch: Partial<BookMeta>): void;
+  /** 记录导出的新格式；不进入撤销历史，也不推进版本。 */
+  addSourceFormat(format: string): void;
 }
 
 const HISTORY_LIMIT = 20;
@@ -41,6 +59,7 @@ function emptyBook(): BookModel {
     volumes: [],
     chapters: [],
     cover: null,
+    source: null,
   };
 }
 
@@ -49,6 +68,7 @@ function toBookModel(
   meta: BookMeta,
   parsed: ParsedBook,
   cover: CoverAsset | null,
+  source: BookSource | null,
 ): BookModel {
   return {
     meta: { ...meta },
@@ -58,6 +78,7 @@ function toBookModel(
     })),
     chapters: parsed.chapters.map((chapter) => ({ ...chapter, lines: [...chapter.lines] })),
     cover,
+    source: source ? { ...source, formats: [...source.formats] } : null,
   };
 }
 
@@ -151,19 +172,38 @@ export function useBookSession(): BookSession {
     version.value += 1;
   }
 
-  function loadBook(meta: BookMeta, parsed: ParsedBook, title: string): void {
+  function loadBook(
+    meta: BookMeta,
+    parsed: ParsedBook,
+    title: string,
+    options: LoadBookOptions = {},
+  ): void {
     const current = book.value;
     if (current.chapters.length > 0) pushSnapshot(current);
 
     const currentTitle = current.meta.title;
     const requestedTitle = title.trim() || meta.title.trim();
-    const shouldApplyTitle = currentTitle === "" || currentTitle === lastAutoTitle;
-    const nextTitle = shouldApplyTitle ? requestedTitle || currentTitle : currentTitle;
-    if (shouldApplyTitle) lastAutoTitle = nextTitle;
+    let nextTitle: string;
+    if (options.forceTitle === true) {
+      nextTitle = requestedTitle || currentTitle;
+      lastAutoTitle = nextTitle;
+    } else {
+      const shouldApplyTitle = currentTitle === "" || currentTitle === lastAutoTitle;
+      nextTitle = shouldApplyTitle ? requestedTitle || currentTitle : currentTitle;
+      if (shouldApplyTitle) lastAutoTitle = nextTitle;
+    }
+
+    // 封面是二进制资源，标记为非响应式，避免大数组被深度代理。
+    const cover = "cover" in options ? (options.cover ? markRaw(options.cover) : null) : current.cover;
 
     rawSelectedId.value = null;
     rawSelectedVolumeId.value = null;
-    book.value = toBookModel({ ...meta, title: nextTitle }, parsed, current.cover);
+    book.value = toBookModel(
+      { ...meta, title: nextTitle },
+      parsed,
+      cover,
+      options.source ?? null,
+    );
     version.value += 1;
   }
 
@@ -248,6 +288,21 @@ export function useBookSession(): BookSession {
     commit({ ...book.value, meta: { ...book.value.meta, ...patch } });
   }
 
+  /** 推送成功后记录新格式：只更新来源，不制造撤销点。 */
+  function addSourceFormat(format: string): void {
+    const current = book.value;
+    const source = current.source;
+    if (!source) return;
+
+    const normalized = format.trim().toUpperCase();
+    if (normalized === "" || source.formats.includes(normalized)) return;
+
+    book.value = {
+      ...current,
+      source: { ...source, formats: [...source.formats, normalized] },
+    };
+  }
+
   return {
     book,
     selected,
@@ -267,5 +322,6 @@ export function useBookSession(): BookSession {
     reset,
     setCover,
     updateMeta,
+    addSourceFormat,
   };
 }

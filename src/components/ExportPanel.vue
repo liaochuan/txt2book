@@ -7,6 +7,7 @@ import type {
   ExportProgress,
   FormatOption,
 } from "../core/converters/types";
+import type { CalibrePushMode } from "../types/calibre";
 
 const props = withDefaults(
   defineProps<{
@@ -20,6 +21,16 @@ const props = withDefaults(
     disabled?: boolean;
     /** 禁用原因；为空时使用默认提示。 */
     hint?: string;
+    /** 当前书籍关联到可推送的 Calibre-Web 实例。 */
+    canPush?: boolean;
+    /** 导出 EPUB 时的推送模式；由父级持有。 */
+    pushMode?: CalibrePushMode;
+    /** 推送目标书名，用于提示。 */
+    calibreTitle?: string;
+    /** 关联书籍已有 EPUB：提示推送会覆盖。 */
+    hasEpub?: boolean;
+    /** 推送进行中：禁用导出并显示推送进度。 */
+    pushing?: boolean;
   }>(),
   {
     converters: () => listConverters(),
@@ -27,11 +38,17 @@ const props = withDefaults(
     progress: null,
     disabled: false,
     hint: "",
+    canPush: false,
+    pushMode: "off",
+    calibreTitle: "",
+    hasEpub: false,
+    pushing: false,
   },
 );
 
 const emit = defineEmits<{
   export: [request: { format: string; options: ConvertOptions }];
+  "update:pushMode": [value: CalibrePushMode];
 }>();
 
 const formats = computed<ConverterMeta[]>(() => props.converters);
@@ -57,6 +74,9 @@ const headerHint = computed<string>(() =>
     ? "该格式由服务器生成，书籍内容会发送到服务器。"
     : "文件在浏览器本地生成，不会上传到服务器。",
 );
+
+/** 只有 EPUB 能推送回 calibre-web；其它格式不展示推送选项。 */
+const showPush = computed<boolean>(() => props.canPush && selected.value?.id === "epub");
 
 /** 当前格式的选项值；切换格式时整体替换，避免旧格式的值串到新格式。 */
 const formatValues = ref<Record<string, boolean | string>>({});
@@ -87,13 +107,21 @@ function onSelectChange(key: string, event: Event): void {
   setFormatValue(key, (event.target as HTMLSelectElement).value);
 }
 
+function onPushModeChange(event: Event): void {
+  emit("update:pushMode", (event.target as HTMLSelectElement).value as CalibrePushMode);
+}
+
 const blockedReason = computed<string>(() => {
   if (!props.disabled) return "";
   return props.hint || "导入 TXT 并生成章节后才能导出。";
 });
 
 const canExport = computed<boolean>(
-  () => !props.busy && !props.disabled && selected.value?.available === true,
+  () =>
+    !props.busy &&
+    !props.pushing &&
+    !props.disabled &&
+    selected.value?.available === true,
 );
 
 function options(): ConvertOptions {
@@ -141,7 +169,11 @@ onBeforeUnmount(stopElapsedTimer);
 </script>
 
 <template>
-  <section class="card export-panel" data-test="export-panel" :aria-busy="busy ? 'true' : 'false'">
+  <section
+    class="card export-panel"
+    data-test="export-panel"
+    :aria-busy="busy || pushing ? 'true' : 'false'"
+  >
     <header class="export-header">
       <h2 class="export-title">导出</h2>
       <p class="export-hint" data-test="export-hint">{{ headerHint }}</p>
@@ -156,7 +188,7 @@ onBeforeUnmount(stopElapsedTimer);
         :class="{ 'export-format-selected': item.id === format }"
         role="radio"
         :aria-checked="item.id === format ? 'true' : 'false'"
-        :disabled="!item.available || busy"
+        :disabled="!item.available || busy || pushing"
         :data-test="`format-${item.id}`"
         @click="format = item.id"
       >
@@ -265,6 +297,46 @@ onBeforeUnmount(stopElapsedTimer);
       </div>
     </fieldset>
 
+    <fieldset v-if="showPush" class="export-options" data-test="push-options">
+      <legend class="export-options-title">Calibre-Web</legend>
+
+      <div class="export-option-field">
+        <label class="export-option export-push-mode">
+          <span>推送方式</span>
+          <select
+            class="export-select"
+            data-test="push-mode"
+            :value="pushMode"
+            :disabled="busy || pushing"
+            :aria-describedby="hasEpub ? 'push-overwrite-warning' : undefined"
+            @change="onPushModeChange"
+          >
+            <option value="off">不推送</option>
+            <option value="download-and-push">下载并推送</option>
+            <option value="push-only">仅推送（不下载）</option>
+          </select>
+        </label>
+        <p
+          v-if="hasEpub"
+          id="push-overwrite-warning"
+          class="option-hint"
+          data-test="push-overwrite-warning"
+        >
+          该书已有 EPUB，推送会覆盖原文件
+        </p>
+        <p v-else-if="calibreTitle" class="option-hint" data-test="push-target">
+          目标：《{{ calibreTitle }}》
+        </p>
+        <p
+          v-if="showPush && pushMode === 'push-only'"
+          class="option-hint"
+          data-test="push-only-hint"
+        >
+          仅推送到 Calibre-Web，不会下载本地文件。
+        </p>
+      </div>
+    </fieldset>
+
     <p v-if="blockedReason" id="export-blocked-hint" class="export-blocked" data-test="export-blocked">
       {{ blockedReason }}
     </p>
@@ -277,9 +349,22 @@ onBeforeUnmount(stopElapsedTimer);
       :aria-describedby="blockedReason ? 'export-blocked-hint' : undefined"
       @click="submit"
     >
-      <span v-if="busy" class="loading">正在生成 {{ selected ? selected.label : "" }}</span>
+      <span v-if="pushing" class="loading">正在推送</span>
+      <span v-else-if="busy" class="loading">正在生成 {{ selected ? selected.label : "" }}</span>
+      <span v-else-if="showPush && pushMode === 'push-only'">
+        仅推送 {{ selected ? selected.label : "" }}
+      </span>
       <span v-else>导出 {{ selected ? selected.label : "" }}</span>
     </button>
+
+    <p
+      v-if="pushing"
+      class="loading export-push-progress"
+      role="status"
+      data-test="export-push-progress"
+    >
+      正在推送到 Calibre-Web…
+    </p>
 
     <div
       v-if="busy"

@@ -84,13 +84,22 @@ function isSameOrigin(origin: string, host: string | undefined, protocol: string
   );
 }
 
+/** 认证路由的可注入依赖：登出时清理其他会话级状态（如 calibre-web 内存连接）。 */
+export interface AuthRouteDeps {
+  onLogout?: () => void;
+}
+
 /**
  * 注册认证路由与全局 Origin 校验。
  *
  * 路由与 hook 同步注册在根实例上（Origin 校验需要覆盖其他任务后续注册的 POST 路由），
  * 返回的 Promise 立即 resolve，便于调用方统一 `await`。
  */
-export function registerAuthRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
+export function registerAuthRoutes(
+  app: FastifyInstance,
+  config: AppConfig,
+  deps: AuthRouteDeps = {},
+): Promise<void> {
   const ipLimiter = createRateLimiter({ limit: LOGIN_LIMIT, windowMs: LOGIN_WINDOW_MS });
   const usernameLimiter = createRateLimiter({ limit: LOGIN_LIMIT, windowMs: LOGIN_WINDOW_MS });
 
@@ -173,6 +182,12 @@ export function registerAuthRoutes(app: FastifyInstance, config: AppConfig): Pro
 
   app.post("/api/auth/logout", async (_request, reply) => {
     noStore(reply);
+    // 先清理其他会话级状态再响应；即使清理抛错也必须完成登出（删除 Cookie）。
+    try {
+      deps.onLogout?.();
+    } catch {
+      // 忽略清理失败：登出本身不能被阻断。
+    }
     // 显式 maxAge=0，确保浏览器立即删除 Cookie。
     return reply
       .setCookie(SESSION_COOKIE, "", cookieOptions(0))

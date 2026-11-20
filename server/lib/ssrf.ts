@@ -178,6 +178,39 @@ function mappedIpv4(groups: readonly number[]): number[] | null {
   return [high >> 8, high & 0xff, low >> 8, low & 0xff];
 }
 
+/**
+ * 取出 IPv6 中可能内嵌的 IPv4，覆盖以下过渡形式：
+ * - IPv4-mapped（`::ffff:a.b.c.d`）；
+ * - IPv4-translated 及其他 `::ffff:...` 变体（`::ffff:0:a.b.c.d`）；
+ * - NAT64 well-known 前缀 `64:ff9b::/96`；
+ * - 6to4（`2002::/16`）。
+ *
+ * 非上述形式返回 `null`。IPv6 与 IPv4 的策略判定共用这段逻辑，避免
+ * `allowPrivate=true` 时通过 `[64:ff9b::a9fe:a9fe]` 之类地址绕过元数据黑名单。
+ */
+function embeddedIpv4(groups: readonly number[]): number[] | null {
+  const mapped = mappedIpv4(groups);
+  if (mapped !== null) return mapped;
+
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = groups;
+
+  if (g0 === 0 && g1 === 0 && g2 === 0 && (g3 === 0xffff || g4 === 0xffff)) {
+    return [g6! >> 8, g6! & 0xff, g7! >> 8, g7! & 0xff];
+  }
+
+  // 6to4：IPv4 内嵌在第 2、3 个分组。
+  if (g0 === 0x2002) {
+    return [g1! >> 8, g1! & 0xff, g2! >> 8, g2! & 0xff];
+  }
+
+  // NAT64 well-known 前缀 `64:ff9b::/96`，IPv4 在最后两个分组。
+  if (g0 === 0x0064 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
+    return [g6! >> 8, g6! & 0xff, g7! >> 8, g7! & 0xff];
+  }
+
+  return null;
+}
+
 /** IPv4 私有/回环/链路本地/CGNAT/组播/保留段判定。 */
 function isBlockedIpv4(octets: readonly number[]): boolean {
   const [a, b, c] = octets;
@@ -207,17 +240,11 @@ function isBlockedIpv4(octets: readonly number[]): boolean {
  * - `fec0::/10`：已废弃的站点本地地址。
  */
 function isBlockedIpv6(groups: readonly number[]): boolean {
-  const [g0, g1, g2, g3, g4, g5, g6, g7] = groups;
+  const [g0, g1, g2, g3, g4, g5] = groups;
 
-  const mapped = mappedIpv4(groups);
-  if (mapped !== null) return isBlockedIpv4(mapped);
-
-  // IPv4-translated 及其他 `::ffff:...` 过渡变体（如 `::ffff:0:a.b.c.d`、
-  // `::ffff:0:0:0:1`）：首 48 位为 0 且第 4/5 分组出现 0xffff，IPv4 位于末 32 位。
-  // 这些地址在部分内核上会被当作 IPv4 转发，必须检查内嵌地址。
-  if (g0 === 0 && g1 === 0 && g2 === 0 && (g3 === 0xffff || g4 === 0xffff)) {
-    return isBlockedIpv4([g6! >> 8, g6! & 0xff, g7! >> 8, g7! & 0xff]);
-  }
+  // IPv4-mapped / translated、NAT64 与 6to4：按内嵌 IPv4 判定。
+  const embedded = embeddedIpv4(groups);
+  if (embedded !== null) return isBlockedIpv4(embedded);
 
   if ((g0! | g1! | g2! | g3! | g4! | g5!) === 0) return true; // ::/96
   if ((g0! & 0xfe00) === 0xfc00) return true; // fc00::/7 唯一本地地址
@@ -225,18 +252,7 @@ function isBlockedIpv6(groups: readonly number[]): boolean {
   if ((g0! & 0xffc0) === 0xfec0) return true; // fec0::/10 站点本地（已废弃）
   if ((g0! & 0xff00) === 0xff00) return true; // ff00::/8 组播
 
-  if (g0 === 0x2002) {
-    // 6to4：IPv4 内嵌在第 2、3 个分组
-    return isBlockedIpv4([g1! >> 8, g1! & 0xff, g2! >> 8, g2! & 0xff]);
-  }
-
-  if (g0 === 0x0064 && g1 === 0xff9b) {
-    if (g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
-      // NAT64 well-known 前缀，IPv4 在最后两个分组
-      return isBlockedIpv4([g6! >> 8, g6! & 0xff, g7! >> 8, g7! & 0xff]);
-    }
-    if (g2 === 0x0001) return true; // 64:ff9b:1::/48 本地 NAT64
-  }
+  if (g0 === 0x0064 && g1 === 0xff9b && g2 === 0x0001) return true; // 64:ff9b:1::/48 本地 NAT64
 
   return false;
 }
@@ -284,6 +300,53 @@ export function isBlockedIp(ip: string): boolean {
   return true;
 }
 
+/** `allowPrivate=true` 时仍必须拒绝的 IPv4 网段：未指定、链路本地、组播/保留与云元数据。 */
+function isAlwaysBlockedIpv4(octets: readonly number[]): boolean {
+  const [a, b, c, d] = octets;
+  if (a === 0) return true; // 0.0.0.0/8
+  if (a === 169 && b === 254) return true; // 169.254.0.0/16 链路本地（云元数据）
+  if (a >= 224) return true; // 224.0.0.0/4 组播 + 240.0.0.0/4 保留
+  if (a === 100 && b === 100 && c === 100 && d === 200) return true; // 云元数据固定地址
+  return false;
+}
+
+/** `allowPrivate=true` 时仍必须拒绝的 IPv6 网段：`::/128`、链路本地、组播与站点本地。 */
+function isAlwaysBlockedIpv6(groups: readonly number[]): boolean {
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = groups;
+
+  if ((g0! | g1! | g2! | g3! | g4! | g5! | g6! | g7!) === 0) return true; // ::/128
+  if ((g0! & 0xffc0) === 0xfe80) return true; // fe80::/10 链路本地
+  if ((g0! & 0xff00) === 0xff00) return true; // ff00::/8 组播
+  if ((g0! & 0xffc0) === 0xfec0) return true; // fec0::/10 站点本地（已废弃）
+
+  // IPv4-mapped / translated、NAT64 与 6to4：内嵌 IPv4 命中始终拒绝段时同样拒绝。
+  const embedded = embeddedIpv4(groups);
+  if (embedded !== null) return isAlwaysBlockedIpv4(embedded);
+
+  return false;
+}
+
+/**
+ * 判断 IP 是否属于“即使允许私网也必须拒绝”的地址。
+ *
+ * 用于 calibre-web 的 `CALIBRE_ALLOW_PRIVATE=true` 模式：允许 RFC1918、回环与
+ * CGNAT，但链路本地、未指定、组播、保留段与云元数据地址始终不可访问。
+ * 无法解析为 IP 的输入按 fail closed 返回 `true`。
+ */
+export function isAlwaysBlockedIp(ip: string): boolean {
+  if (typeof ip !== "string") return true;
+  const normalized = normalizeIp(ip);
+  if (normalized === "") return true;
+
+  const ipv4 = parseIpv4(normalized);
+  if (ipv4 !== null) return isAlwaysBlockedIpv4(ipv4);
+
+  const ipv6 = parseIpv6(normalized);
+  if (ipv6 !== null) return isAlwaysBlockedIpv6(ipv6);
+
+  return true;
+}
+
 /**
  * 判断主机名是否指向本地/内网。
  *
@@ -309,7 +372,7 @@ export function isBlockedHostname(host: string): boolean {
 }
 
 /** 端口策略：80/443/8080/8443，或 >= 1024 且不属于常见内网服务端口。 */
-function isAllowedPort(port: number): boolean {
+export function isAllowedPort(port: number): boolean {
   if (!Number.isInteger(port) || port <= 0 || port > 65535) return false;
   if (ALLOWED_PORTS.has(port)) return true;
   if (port < 1024) return false;

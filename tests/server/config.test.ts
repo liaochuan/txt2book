@@ -2,6 +2,9 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../server/lib/config";
 
+/** 满足最小长度要求的会话密钥。 */
+const SECRET = "x".repeat(32);
+
 /** 测试用环境变量：绕过 `NodeJS.ProcessEnv` 的只读索引签名。 */
 function env(values: Record<string, string>): NodeJS.ProcessEnv {
   return values as NodeJS.ProcessEnv;
@@ -40,5 +43,18 @@ describe("loadConfig", () => {
       env({ SESSION_SECRET: "x".repeat(32), AUTH_PASSWORD_HASH: "h", RATE_LIMIT_PER_MIN: "5" }),
     );
     expect(cfg.rateLimitPerMin).toBe(5);
+  });
+
+  it("loads calibre defaults and overrides", () => {
+    const base = loadConfig(env({ SESSION_SECRET: SECRET, AUTH_PASSWORD_HASH: "h" }));
+    expect(base.calibreAllowPrivate).toBe(true);
+    expect(base.calibreStorePath).toBe("./data/calibre-connection.json");
+    expect(base.calibrePushTimeoutMs).toBe(120_000);
+    const custom = loadConfig(env({
+      SESSION_SECRET: SECRET, AUTH_PASSWORD_HASH: "h",
+      CALIBRE_ALLOW_PRIVATE: "false", CALIBRE_PUSH_TIMEOUT_MS: "90000",
+    }));
+    expect(custom.calibreAllowPrivate).toBe(false);
+    expect(custom.calibrePushTimeoutMs).toBe(90_000);
   });
 });

@@ -19,6 +19,18 @@ import { createRateLimiter } from "../lib/rateLimit.js";
 /** multipart 上传硬上限：10MB（设计文档 §12.3）。 */
 export const MAX_COVER_UPLOAD_BYTES = 10 * 1024 * 1024;
 
+/**
+ * 封面单请求的 multipart 限制。
+ *
+ * 全局插件上限取封面与 calibre 推送的较大值（推送默认 50MB），
+ * 因此封面路由必须显式声明自己的 10MB，避免借推送上限绕过封面限制。
+ */
+const COVER_UPLOAD_LIMITS = {
+  fileSize: MAX_COVER_UPLOAD_BYTES,
+  files: 1,
+  parts: 8,
+} as const;
+
 /** URL 输入长度上限，避免超长字符串进入解析与日志路径。 */
 const MAX_URL_LENGTH = 2048;
 
@@ -76,7 +88,7 @@ function isFileTooLarge(error: unknown): boolean {
 
 /** 读取单个 `file` 字段；字段名不符或存在多个文件时拒绝。 */
 async function readUploadedFile(request: FastifyRequest): Promise<Buffer | null> {
-  const file = await request.file();
+  const file = await request.file({ limits: COVER_UPLOAD_LIMITS });
   if (file === undefined) return null;
 
   if (file.fieldname !== "file") {

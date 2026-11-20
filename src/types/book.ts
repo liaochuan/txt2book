@@ -34,9 +34,20 @@ export interface CoverAsset {
   sourceName?: string;
 }
 
+export interface BookSource {
+  kind: "calibre-web";
+  /** 已连接实例的 origin，用于校验关联是否仍属于当前连接。 */
+  origin: string;
+  bookId: number;
+  title: string;
+  formats: string[];
+}
+
 export interface BookModel {
   meta: BookMeta;
   volumes: Volume[];
   chapters: Chapter[];
   cover: CoverAsset | null;
+  /** calibre-web 等外部来源；本地导入或旧数据为 null。 */
+  source?: BookSource | null;
 }

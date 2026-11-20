@@ -1,4 +1,4 @@
-import { nextTick } from "vue";
+import { isProxy, nextTick, ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../src/core/api";
 import { useBookSession } from "../src/composables/useBookSession";
@@ -380,5 +380,119 @@ describe("useCover", () => {
 
     expect(URL.createObjectURL).toHaveBeenCalledTimes(2);
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
+  });
+
+  it("prepares a png asset without writing the session, preview or error", async () => {
+    const session = useBookSession();
+    const first = coverAsset();
+    session.setCover(first);
+    const { cover, previewUrl, error, prepare } = useCover(session);
+    const before = previewUrl.value;
+
+    const asset = await prepare(pngBlob(), "calibre.png");
+
+    expect(isProxy(ref(asset).value)).toBe(false);
+    expect(asset.png).toBeInstanceOf(Uint8Array);
+    expect(Array.from(asset.png)).toEqual(PNG_BYTES);
+    expect(asset.width).toBe(600);
+    expect(asset.height).toBe(900);
+    expect(asset.sourceName).toBe("calibre.png");
+    expect(cover.value).toBe(first);
+    expect(session.book.value.cover).toBe(first);
+    expect(previewUrl.value).toBe(before);
+    expect(error.value).toBe("");
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the in-flight request abortable when prepare runs concurrently", async () => {
+    let release: (blob: Blob) => void = () => {};
+    const gate = new Promise<Blob>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(api.coverFromUrl).mockReturnValue(gate);
+    const { busy, fromUrl, prepare, clear } = useCover(useBookSession());
+
+    const pending = fromUrl("https://example.com/slow.png");
+    expect(busy.value).toBe(true);
+    const signal = vi.mocked(api.coverFromUrl).mock.calls[0]?.[1];
+
+    await prepare(pngBlob());
+
+    clear();
+
+    expect(signal?.aborted).toBe(true);
+
+    release(pngBlob());
+    await expect(pending).resolves.toBe(false);
+  });
+
+  it("leaves an existing error untouched when prepare succeeds", async () => {
+    vi.mocked(api.coverFromUrl).mockRejectedValue(new ApiError(415, "BAD", "x"));
+    const { error, fromUrl, prepare } = useCover(useBookSession());
+    await fromUrl("https://example.com/a.png");
+    expect(error.value).toBe("图片格式不支持");
+
+    await prepare(pngBlob());
+
+    expect(error.value).toBe("图片格式不支持");
+  });
+
+  it("does not change busy or the current preview during prepare", async () => {
+    vi.mocked(api.coverFromUrl).mockResolvedValue(pngBlob());
+    const { previewUrl, busy, fromUrl, prepare } = useCover(useBookSession());
+    await fromUrl("https://example.com/a.png");
+    const before = previewUrl.value;
+
+    await prepare(pngBlob());
+
+    expect(busy.value).toBe(false);
+    expect(previewUrl.value).toBe(before);
+  });
+
+  it("rejects a non-png blob from prepare", async () => {
+    const { error, prepare } = useCover(useBookSession());
+    const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: "image/jpeg" });
+
+    await expect(prepare(blob)).rejects.toThrow();
+
+    expect(error.value).toBe("");
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("writes a prepared blob into the session and creates a preview", async () => {
+    const session = useBookSession();
+    const { cover, previewUrl, error, fromBlob } = useCover(session);
+
+    const ok = await fromBlob(pngBlob(), "calibre.png");
+
+    expect(ok).toBe(true);
+    expect(error.value).toBe("");
+    expect(cover.value?.sourceName).toBe("calibre.png");
+    expect(cover.value?.width).toBe(600);
+    expect(cover.value?.height).toBe(900);
+    expect(session.book.value.cover).toBe(cover.value);
+    expect(previewUrl.value).toBe("blob:mock-1");
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the current cover and reports an error when fromBlob fails", async () => {
+    const session = useBookSession();
+    const first = coverAsset();
+    session.setCover(first);
+    const { cover, previewUrl, error, fromBlob, busy } = useCover(session);
+    const before = previewUrl.value;
+
+    const ok = await fromBlob(
+      new Blob([new Uint8Array(PNG_BYTES)], { type: "image/jpeg" }),
+    );
+
+    expect(ok).toBe(false);
+    expect(busy.value).toBe(false);
+    expect(error.value).toBe("服务器返回的封面格式异常");
+    expect(cover.value).toBe(first);
+    expect(session.book.value.cover).toBe(first);
+    expect(previewUrl.value).toBe(before);
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
   });
 });
