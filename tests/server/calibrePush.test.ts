@@ -113,6 +113,8 @@ describe("calibreService pushEpub", () => {
       comments: "第一段 & 第二段",
       "identifier-type-isbn": "isbn",
       "identifier-val-isbn": "978-7-111",
+      "identifier-type-起点": "起点",
+      "identifier-val-起点": "https://www.qidian.com/book/1037975901/",
     });
     const uploadIndex = fake.requests.findIndex((item) => item.path === "/upload");
     const restoreIndex = fake.requests.findIndex(

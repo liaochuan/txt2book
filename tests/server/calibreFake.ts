@@ -196,6 +196,8 @@ function adminBookPage(bookId: number): string {
     '<textarea name="comments">第一段 &amp; 第二段</textarea>',
     '<input type="text" name="identifier-type-isbn" value="isbn">',
     '<input type="text" name="identifier-val-isbn" value="978-7-111">',
+    '<input type="text" name="identifier-type-起点" value="起点">',
+    '<input type="text" name="identifier-val-起点" value="https://www.qidian.com/book/1037975901/">',
     "<script>line += '<input name=\"identifier-type-'+ rand_id +'\" value=\"\">';</script>",
     "</form></body></html>",
   ].join("");

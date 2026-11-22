@@ -262,6 +262,8 @@ describe("extractUploadMetadata", () => {
       '<input type="text" name="tags" value="科幻, 小说">',
       '<input type="text" name="identifier-type-isbn" value="isbn">',
       '<input type="text" name="identifier-val-isbn" value="978-7-111&amp;x">',
+      '<input type="text" name="identifier-type-起点" value="起点">',
+      '<input type="text" name="identifier-val-起点" value="https://www.qidian.com/book/1037975901/">',
       '<input type="text" name="subtitle" value="不应被读取">',
       '<script>line += \'<input name="identifier-type-\'+ rand_id +\'" value="">\';</script>',
     ].join("");
@@ -276,6 +278,8 @@ describe("extractUploadMetadata", () => {
         tags: "科幻, 小说",
         "identifier-type-isbn": "isbn",
         "identifier-val-isbn": "978-7-111&x",
+        "identifier-type-起点": "起点",
+        "identifier-val-起点": "https://www.qidian.com/book/1037975901/",
       },
     });
   });

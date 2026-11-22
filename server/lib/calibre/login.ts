@@ -153,10 +153,11 @@ export function extractUploadMetadata(html: string): {
       continue;
     }
 
-    const identifier = /^identifier-(type|val)-([A-Za-z0-9_.-]+)$/i.exec(name);
+    const identifier = /^identifier-(type|val)-(.+)$/i.exec(name);
     if (!identifier) continue;
-    const [, kind, suffix] = identifier;
-    if (!suffix) continue;
+    const [, kind, rawSuffix] = identifier;
+    const suffix = rawSuffix?.trim() ?? "";
+    if (suffix === "") continue;
     const entry = identifiers.get(suffix) ?? {};
     if (kind?.toLowerCase() === "type") entry.type = value;
     else entry.value = value;
