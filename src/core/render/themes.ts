@@ -35,23 +35,9 @@ const STRUCTURAL_CSS = `
   max-height: 100vh;
   margin: 0 auto;
 }
-.txt2book .title-page,
 .txt2book .volume-page {
   padding-top: 20%;
   text-align: center;
-}
-.txt2book .book-title {
-  margin: 0 0 0.6em;
-  font-size: 2em;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  page-break-after: avoid;
-  break-after: avoid;
-}
-.txt2book .book-author {
-  margin: 0 0 1.5em;
-  font-size: 1.1em;
-  opacity: 0.75;
 }
 .txt2book .description-page {
   padding-top: 12%;
@@ -328,9 +314,6 @@ const eink = defineTheme(
 }
 .txt2book hr.chapter-sep {
   border-top: 0;
-  opacity: 1;
-}
-.txt2book .book-author {
   opacity: 1;
 }
 `,

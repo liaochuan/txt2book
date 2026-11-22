@@ -139,20 +139,8 @@ export function coverDocument(meta: BookMeta): string {
   );
 }
 
-/** 书名页：书名与作者。简介单独成页，见 `descriptionDocument`。 */
-export function titlePageDocument(meta: BookMeta): string {
-  const title = bookTitle(meta);
-  const parts: string[] = ['<section class="title-page">', `<h1 class="book-title">${escapeXml(title)}</h1>`];
-  const author = meta.author.trim();
-  if (author) {
-    parts.push(`<p class="book-author">${escapeXml(author)}</p>`);
-  }
-  parts.push("</section>");
-  return xhtmlDocument(title, meta.language, parts.join("\n"));
-}
-
 /**
- * 简介页：只在 `meta.description` 非空时生成。
+ * 简介页：只在开关开启且 `meta.description` 非空时生成。
  * 行内除空行外每行一个 `<p>`，空行分隔的段落用 `paragraph-start` 标记，
  * 保留作者原始的分段，不压平成一段。
  */

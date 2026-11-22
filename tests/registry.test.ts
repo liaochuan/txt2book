@@ -23,7 +23,6 @@ describe("converter registry", () => {
     expect(converterRegistry.txt.options?.map((option) => option.key)).toEqual([
       "includeIntro",
       "includeVolumeTitles",
-      "includeDescription",
     ]);
     expect(listConverters().at(-1)?.options?.map((option) => option.key)).toEqual([
       "pageSize",
@@ -39,7 +38,7 @@ describe("converter registry", () => {
     expect(resolveConvertOptions({})).toEqual({
       themeId: "paper",
       includeTocPage: false,
-      includeTitlePage: false,
+      includeDescription: false,
       includeVolumePages: false,
     });
 

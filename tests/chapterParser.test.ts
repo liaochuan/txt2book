@@ -113,6 +113,68 @@ describe("parseChapters", () => {
       expect(parseChapters([title, "正文"], "zh-CN").chapters.map((c) => c.title)).toEqual([title]);
     }
   });
+
+  it("recognizes headings that end with sentence punctuation when isolated by a blank line", () => {
+    const parsed = parseChapters(
+      ["第6章 前情", "正文", "", "第7章 啊？神器？", "正文", "", "第9章 爆兵！炎魔异动！", "正文"],
+      "zh-CN",
+    );
+    expect(parsed.chapters.map((c) => c.title)).toEqual([
+      "第6章 前情",
+      "第7章 啊？神器？",
+      "第9章 爆兵！炎魔异动！",
+    ]);
+  });
+
+  it("keeps inline chapter references as body text", () => {
+    const parsed = parseChapters(
+      ["第6章 前情", "比如教材。", "第一章，人体七大魔力节点模型？", "很好，跳过。"],
+      "zh-CN",
+    );
+    expect(parsed.chapters.map((c) => c.title)).toEqual(["第6章 前情"]);
+    expect(parsed.chapters[0].lines).toContain("第一章，人体七大魔力节点模型？");
+  });
+
+  it("does not accept prose that starts with a chapter marker", () => {
+    const parsed = parseChapters(
+      [
+        "第1章 标题",
+        "正文",
+        "",
+        "第一章的内容，他已经倒背如流。",
+        "",
+        "第一回合，他就落了下风。",
+      ],
+      "zh-CN",
+    );
+    expect(parsed.chapters.map((c) => c.title)).toEqual(["第1章 标题"]);
+    expect(parsed.chapters[0].lines).toContain("第一章的内容，他已经倒背如流。");
+    expect(parsed.chapters[0].lines).toContain("第一回合，他就落了下风。");
+  });
+
+  it("keeps punctuation exemption limited to chapter rules", () => {
+    const prologue = parseChapters(
+      ["序，怎么会有这种事？", "正文", "", "第1章 一", "正文"],
+      "zh-CN",
+    );
+    expect(prologue.chapters.map((c) => c.title)).toEqual(["简介", "第1章 一"]);
+
+    const volume = parseChapters(["第一卷 风起云涌？", "第1章 一", "正文"], "zh-CN");
+    expect(volume.volumes).toEqual([]);
+    expect(volume.chapters.map((c) => c.title)).toEqual(["简介", "第1章 一"]);
+  });
+
+  it("recognizes uppercase hundred and thousand numerals", () => {
+    for (const title of ["第壹佰章 开端", "第壹仟章 终局"]) {
+      expect(parseChapters([title, "正文"], "zh-CN").chapters.map((c) => c.title)).toEqual([title]);
+    }
+  });
+
+  it("recognizes a punctuated chapter title directly after a volume", () => {
+    const parsed = parseChapters(["第一卷 风起", "第7章 啊？神器？", "正文"], "zh-CN");
+    expect(parsed.volumes.map((v) => v.title)).toEqual(["第一卷 风起"]);
+    expect(parsed.chapters.map((c) => c.title)).toEqual(["第7章 啊？神器？"]);
+  });
 });
 
 describe("parseChapters with user rules", () => {

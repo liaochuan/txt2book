@@ -26,7 +26,7 @@ const ELEMENT_GROUPS: ElementGroup[] = [
   { key: "body", label: "正文", hint: "章节正文段落。" },
   { key: "volumeTitle", label: "卷标题", hint: "卷扉页标题，以及章首的卷标题。" },
   { key: "volumeNote", label: "卷首文字", hint: "卷标题与第一章之间的文字，默认居中。" },
-  { key: "intro", label: "简介", hint: "书名页与简介页正文。" },
+  { key: "intro", label: "简介", hint: "简介页正文。" },
   { key: "tocTitle", label: "目录标题", hint: "目录页顶部的「目录」二字。" },
   { key: "tocItem", label: "目录条目", hint: "目录页中的章节列表。" },
 ];

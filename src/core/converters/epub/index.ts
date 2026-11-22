@@ -16,7 +16,6 @@ import {
   descriptionDocument,
   labelFor,
   navDocument,
-  titlePageDocument,
   tocNcxDocument,
   volumeDocument,
   type NavEntry,
@@ -65,7 +64,7 @@ function isoTimestamp(date: Date): string {
  *   OEBPS/toc.ncx                 （旧阅读器兼容）
  *   OEBPS/styles/theme.css
  *   OEBPS/images/cover.png
- *   OEBPS/cover.xhtml / titlepage.xhtml / description.xhtml / volume-N.xhtml
+ *   OEBPS/cover.xhtml / description.xhtml / volume-N.xhtml
  *   OEBPS/text/chapter-N.xhtml
  */
 export async function buildEpub(
@@ -133,14 +132,8 @@ export async function buildEpub(
     spine.push({ idref: "cover-page" });
   }
 
-  if (opts.includeTitlePage) {
-    oebps.file("titlepage.xhtml", titlePageDocument(meta));
-    manifest.push({ id: "titlepage", href: "titlepage.xhtml", mediaType: "application/xhtml+xml" });
-    spine.push({ idref: "titlepage" });
-  }
-
-  // 简介页只看 meta.description，与书名页开关无关。
-  if (meta.description?.trim()) {
+  // 简介页由独立选项控制；关闭后元数据中的 dc:description 仍然保留。
+  if (opts.includeDescription && meta.description?.trim()) {
     oebps.file("description.xhtml", descriptionDocument(meta));
     manifest.push({ id: "description", href: "description.xhtml", mediaType: "application/xhtml+xml" });
     spine.push({ idref: "description" });

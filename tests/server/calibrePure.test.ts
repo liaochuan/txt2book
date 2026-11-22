@@ -10,6 +10,7 @@ import {
   buildLoginBody,
   buildMultipartBody,
   extractCsrfToken,
+  extractUploadMetadata,
   sanitizeEpubFilename,
 } from "../../server/lib/calibre/login";
 
@@ -248,5 +249,49 @@ describe("buildMultipartBody", () => {
     expect(text).toContain('name="bad%22%0D%0Aname"');
     expect(text).toContain('name="up%0D%0Aload"');
     expect(text).toContain('filename="a%22%0D%0AX-Injected: 1.epub"');
+  });
+});
+
+describe("extractUploadMetadata", () => {
+  it("reads comments, authors, rating and identifier inputs", () => {
+    const html = [
+      '<textarea id="comments" name="comments">第一段 &amp; 第二段&#10;换行</textarea>',
+      '<input type="text" name="title" value="三体">',
+      '<input type="text" name="authors" value="刘慈欣 &amp; 另一位">',
+      '<input type="number" name="rating" value="4">',
+      '<input type="text" name="tags" value="科幻, 小说">',
+      '<input type="text" name="identifier-type-isbn" value="isbn">',
+      '<input type="text" name="identifier-val-isbn" value="978-7-111&amp;x">',
+      '<input type="text" name="subtitle" value="不应被读取">',
+      '<script>line += \'<input name="identifier-type-\'+ rand_id +\'" value="">\';</script>',
+    ].join("");
+
+    expect(extractUploadMetadata(html)).toEqual({
+      found: true,
+      fields: {
+        comments: "第一段 & 第二段\n换行",
+        title: "三体",
+        authors: "刘慈欣 & 另一位",
+        rating: "4",
+        tags: "科幻, 小说",
+        "identifier-type-isbn": "isbn",
+        "identifier-val-isbn": "978-7-111&x",
+      },
+    });
+  });
+
+  it("ignores script-generated identifier fields and reports missing edit forms", () => {
+    expect(
+      extractUploadMetadata('<script>line += \'<input name="identifier-type-x" value="">\';</script>'),
+    ).toEqual({ found: false, fields: {} });
+    expect(extractUploadMetadata("<html><body>没有表单</body></html>")).toEqual({
+      found: false,
+      fields: {},
+    });
+  });
+
+  it("keeps out-of-range numeric entities instead of throwing", () => {
+    const result = extractUploadMetadata('<textarea name="comments">&#99999999;</textarea>');
+    expect(result.fields.comments).toBe("&#99999999;");
   });
 });

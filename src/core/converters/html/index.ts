@@ -761,19 +761,6 @@ function coverPage(book: BookModel): string | null {
   ].join("\n");
 }
 
-function titlePage(meta: BookMeta): string {
-  const parts = [
-    '<section class="title-page">',
-    `<h1 class="book-title">${escapeHtml(bookTitle(meta))}</h1>`,
-  ];
-  const author = meta.author.trim();
-  if (author) {
-    parts.push(`<p class="book-author">${escapeHtml(author)}</p>`);
-  }
-  parts.push("</section>");
-  return parts.join("\n");
-}
-
 /** 简介页：空行分隔的段落用 `paragraph-start` 标记，保留作者原始分段。 */
 function descriptionPage(meta: BookMeta): string | null {
   const description = meta.description?.trim();
@@ -870,9 +857,10 @@ export async function buildHtml(
   const body: string[] = [];
   const cover = coverPage(book);
   if (cover) body.push(cover);
-  if (opts.includeTitlePage) body.push(titlePage(meta));
-  const description = descriptionPage(meta);
-  if (description) body.push(description);
+  if (opts.includeDescription) {
+    const description = descriptionPage(meta);
+    if (description) body.push(description);
+  }
 
   const tocItems = buildTocItems(blocks, new Set(book.volumes.map((volume) => volume.id)));
   // 侧栏始终生成；正文目录页仍由 includeTocPage 控制，二者共用同一批锚点。

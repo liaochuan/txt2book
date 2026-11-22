@@ -121,7 +121,22 @@ describe("BookMetaPanel", () => {
       title: "书",
       author: "",
       language: "zh-CN",
-      description: "新增简介",
+      description: "　　新增简介",
+    });
+  });
+
+  it("indents every description paragraph on blur", async () => {
+    const wrapper = mountPanel({ title: "书", author: "", language: "zh-CN" });
+    const description = wrapper.get('[data-test="meta-description"]');
+
+    await description.setValue("第一段\n\n第二段");
+    await description.trigger("blur");
+
+    expect(
+      (description.element as HTMLTextAreaElement).value,
+    ).toBe("　　第一段\n\n　　第二段");
+    expect(wrapper.emitted("update:meta")?.[0]?.[0]).toMatchObject({
+      description: "　　第一段\n\n　　第二段",
     });
   });
 

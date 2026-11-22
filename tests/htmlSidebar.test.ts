@@ -15,7 +15,6 @@ const book: BookModel = {
 const options = {
   themeId: "paper" as const,
   includeTocPage: false,
-  includeTitlePage: true,
   includeVolumePages: true,
 };
 

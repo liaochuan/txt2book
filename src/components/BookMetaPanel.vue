@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from "vue";
+import { indentParagraphs } from "../core/preprocess";
 import type { BookMeta, Language } from "../types/book";
 
 const props = defineProps<{ meta: BookMeta }>();
@@ -74,6 +75,16 @@ function onLanguageChange(): void {
 function onEnter(event: KeyboardEvent): void {
   if (event.isComposing) return;
   event.preventDefault();
+  flush();
+}
+
+/** 简介按段落展示：失焦时统一补齐两个全角空格的首行缩进。 */
+function onDescriptionBlur(): void {
+  const formatted = indentParagraphs(description.value);
+  if (formatted !== description.value) {
+    description.value = formatted;
+    dirty = true;
+  }
   flush();
 }
 
@@ -155,7 +166,7 @@ onBeforeUnmount(flush);
           rows="3"
           placeholder="可选，会写入电子书简介"
           @input="schedule"
-          @blur="flush"
+          @blur="onDescriptionBlur"
         />
       </div>
     </div>

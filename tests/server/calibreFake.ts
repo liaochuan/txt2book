@@ -72,6 +72,8 @@ export interface FakeCalibreOptions {
   uploadDelayMs?: number;
   /** `GET /admin/book/:id` 的响应状态；默认 200。 */
   adminBookStatus?: number;
+  /** `POST /admin/book/:id` 恢复元数据的响应状态；默认 302。 */
+  metadataRestoreStatus?: number;
 }
 
 export interface FakeCalibreRequest {
@@ -97,10 +99,17 @@ export interface FakeCalibreUpload {
   csrfHeader?: string;
 }
 
+/** 上传后回写元数据的 `POST /admin/book/:id` 请求体。 */
+export interface FakeCalibreMetadataRestore {
+  bookId: number;
+  fields: Record<string, string>;
+}
+
 export interface FakeCalibre {
   baseUrl: string;
   requests: FakeCalibreRequest[];
   uploads: FakeCalibreUpload[];
+  metadataRestores: FakeCalibreMetadataRestore[];
   close(): Promise<void>;
 }
 
@@ -174,8 +183,20 @@ function loginPage(): string {
 function adminBookPage(bookId: number): string {
   return [
     `<!doctype html><html><head><title>编辑 ${bookId}</title></head><body>`,
-    '<form method="post" action="/upload">',
+    '<form method="post" action="/upload" id="book_edit_frm">',
     `<input type="hidden" name="csrf_token" value="${ADMIN_CSRF_TOKEN}">`,
+    '<input type="text" name="title" value="三体">',
+    '<input type="text" name="authors" value="刘慈欣 &amp; 另一位">',
+    '<input type="number" name="rating" value="4">',
+    '<input type="text" name="tags" value="科幻, 小说">',
+    '<input type="text" name="series" value="地球往事">',
+    '<input type="number" name="series_index" value="1">',
+    '<input type="text" name="publisher" value="重庆出版社">',
+    '<input type="text" name="languages" value="中文">',
+    '<textarea name="comments">第一段 &amp; 第二段</textarea>',
+    '<input type="text" name="identifier-type-isbn" value="isbn">',
+    '<input type="text" name="identifier-val-isbn" value="978-7-111">',
+    "<script>line += '<input name=\"identifier-type-'+ rand_id +'\" value=\"\">';</script>",
     "</form></body></html>",
   ].join("");
 }
@@ -317,6 +338,7 @@ export async function startCalibreFake(options: FakeCalibreOptions): Promise<Fak
   const expectedAuth = expectedAuthorization(options.username, options.password);
   const requests: FakeCalibreRequest[] = [];
   const uploads: FakeCalibreUpload[] = [];
+  const metadataRestores: FakeCalibreMetadataRestore[] = [];
 
   /** 每本书当前是否已有 EPUB，以及预检/确认阶段暴露的响应头。 */
   const epubStates = new Map<number, { exists: boolean; length: number; lastModified?: string }>();
@@ -386,6 +408,29 @@ export async function startCalibreFake(options: FakeCalibreOptions): Promise<Fak
         return;
       }
       sendHtml(response, 200, adminBookPage(Number(adminBook[1])));
+      return;
+    }
+
+    if (request.method === "POST" && adminBook !== null) {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        record.body = raw;
+        const bookId = Number(adminBook[1]);
+        metadataRestores.push({
+          bookId,
+          fields: Object.fromEntries(new URLSearchParams(raw)),
+        });
+
+        const status = options.metadataRestoreStatus ?? 302;
+        if (status >= 400) {
+          send(response, status, { "content-type": "text/plain; charset=utf-8" }, "restore failed");
+          return;
+        }
+        response.writeHead(status, { location: `/book/${bookId}`, "content-length": "0" });
+        response.end();
+      });
       return;
     }
 
@@ -652,6 +697,7 @@ export async function startCalibreFake(options: FakeCalibreOptions): Promise<Fak
     baseUrl: `http://127.0.0.1:${address.port}`,
     requests,
     uploads,
+    metadataRestores,
     close: () => closeServer(server),
   };
 }

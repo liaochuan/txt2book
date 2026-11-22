@@ -918,29 +918,6 @@ function drawCover(state: RenderState, buffer: Buffer): void {
   }
 }
 
-function drawTitlePage(state: RenderState, meta: PdfMeta): void {
-  startPage(state);
-  const elements = state.layout.typography.elements;
-  const titleStyle = elements.chapterTitle;
-  const titleSize = BASE_FONT_SIZE * titleStyle.fontSize;
-  const title =
-    bookTitle(meta).trim();
-  let y = state.margin + contentHeight(state) * 0.28;
-  y += titleStyle.marginTop * titleSize;
-  y = drawParagraph(state, title, titleStyle, state.margin, contentWidth(state), y);
-  y += titleStyle.marginBottom * titleSize * 0.5;
-
-  const author = meta.author?.trim();
-  if (author) {
-    const authorStyle: PdfElementStyle = {
-      ...elements.intro,
-      align: "center",
-      textIndent: 0,
-    };
-    drawParagraph(state, author, authorStyle, state.margin, contentWidth(state), y);
-  }
-}
-
 function drawDescriptionPage(state: RenderState, meta: PdfMeta): void {
   const description = meta.description?.trim();
   if (!description) return;
@@ -1219,11 +1196,9 @@ function buildPdf(
     drawCover(state, images.cover);
   }
 
-  if (options.includeTitlePage ?? false) {
-    drawTitlePage(state, book.meta);
+  if (options.includeDescription ?? false) {
+    drawDescriptionPage(state, book.meta);
   }
-
-  drawDescriptionPage(state, book.meta);
 
   const includeVolumePages = options.includeVolumePages ?? false;
   const blocks = planPdfBlocks(book, includeVolumePages);
@@ -1249,8 +1224,9 @@ function buildPdf(
     );
   }
 
+  // 空书也要生成一页，避免输出 0 页 PDF；不再输出书名/作者页。
   if (state.pageCount === 0) {
-    drawTitlePage(state, book.meta);
+    startPage(state);
   }
 
   doc.end();
@@ -1269,7 +1245,7 @@ export interface PdfRenderDeps {
 }
 
 /**
- * 生成 PDF：封面 → 书名页（可选）→ 简介 → 目录（可选）→ 卷扉页（可选）→ 章节。
+ * 生成 PDF：封面 → 简介（可选）→ 目录（可选）→ 卷扉页（可选）→ 章节。
  * 两遍排版保证目录页码与正文一致。
  */
 export async function renderPdf(

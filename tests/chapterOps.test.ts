@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createHistory, deleteChapter, deleteVolume, renameChapter } from "../src/core/chapterOps";
+import { createHistory, deleteChapter, deleteVolume, renameChapter, splitChapter } from "../src/core/chapterOps";
 import type { BookModel } from "../src/types/book";
 
 function book(): BookModel {
@@ -158,6 +158,111 @@ describe("renameChapter", () => {
     const next = renameChapter(book(), "c1", "新名字");
     expect(next.chapters[0].title).toBe("新名字");
     expect(next.chapters[0].originalTitle).toBe("一");
+  });
+});
+
+describe("splitChapter", () => {
+  const source = (): BookModel => ({
+    meta: { title: "书", author: "", language: "zh-CN" },
+    volumes: [{ id: "v1", title: "第一卷", kind: "volume" }],
+    chapters: [
+      {
+        id: "c1",
+        title: "第7章 啊？神器？",
+        kind: "chapter",
+        lines: ["a", "", "第8章 靠谱的银荆", "b"],
+        volumeId: "v1",
+      },
+    ],
+    cover: null,
+  });
+
+  it("moves trailing lines into a new chapter after the source", () => {
+    const next = splitChapter(source(), "c1", 2, {
+      title: "第8章 靠谱的银荆",
+      dropLine: true,
+    })!;
+    expect(next.chapters).toHaveLength(2);
+    expect(next.chapters[0].lines).toEqual(["a"]);
+    expect(next.chapters[1].title).toBe("第8章 靠谱的银荆");
+    expect(next.chapters[1].lines).toEqual(["b"]);
+    expect(next.chapters[1].volumeId).toBe("v1");
+  });
+
+  it("keeps the selected line when dropLine is false", () => {
+    const next = splitChapter(source(), "c1", 2, { title: "新章", dropLine: false })!;
+    expect(next.chapters[1].lines).toEqual(["第8章 靠谱的银荆", "b"]);
+  });
+
+  it("rejects invalid split points", () => {
+    expect(splitChapter(source(), "c1", 0)).toBeNull();
+    expect(splitChapter(source(), "c1", 4)).toBeNull();
+    expect(splitChapter(source(), "missing", 1)).toBeNull();
+    expect(splitChapter(source(), "c1", 1.5)).toBeNull();
+  });
+
+  it("does not mutate the source book", () => {
+    const original = source();
+    splitChapter(original, "c1", 2, { title: "第8章" });
+    expect(original.chapters[0].lines).toEqual(["a", "", "第8章 靠谱的银荆", "b"]);
+  });
+
+  it("falls back to the selected line or 新章节 when the title is empty", () => {
+    const dropped = splitChapter(source(), "c1", 2, { title: "  ", dropLine: true })!;
+    expect(dropped.chapters[1].title).toBe("第8章 靠谱的银荆");
+    expect(dropped.chapters[1].originalTitle).toBe("第8章 靠谱的银荆");
+    expect(dropped.chapters[1].kind).toBe("chapter");
+
+    const kept = splitChapter(source(), "c1", 2, { title: "", dropLine: false })!;
+    expect(kept.chapters[1].title).toBe("新章节");
+  });
+
+  it("allows splitting at the last line when the line stays in the body", () => {
+    const kept = splitChapter(source(), "c1", 3, { title: "尾声", dropLine: false })!;
+    expect(kept.chapters[0].lines).toEqual(["a", "", "第8章 靠谱的银荆"]);
+    expect(kept.chapters[1].lines).toEqual(["b"]);
+  });
+
+  it("rejects a split that would create a bodyless chapter", () => {
+    expect(splitChapter(source(), "c1", 3, { title: "尾声", dropLine: true })).toBeNull();
+  });
+
+  it("trims blank lines around both halves", () => {
+    const original = source();
+    original.chapters[0].lines = ["a", "", "", "第8章 靠谱的银荆", "", "b", ""];
+    const next = splitChapter(original, "c1", 3, {
+      title: "第8章 靠谱的银荆",
+      dropLine: true,
+    })!;
+    expect(next.chapters[0].lines).toEqual(["a"]);
+    expect(next.chapters[1].lines).toEqual(["b"]);
+  });
+
+  it("rejects a split whose new body is blank", () => {
+    const original = source();
+    original.chapters[0].lines = ["a", "", "   "];
+    expect(splitChapter(original, "c1", 2, { title: "空白", dropLine: false })).toBeNull();
+  });
+
+  it("inherits the chapter kind, turning intro into chapter", () => {
+    const original = source();
+    original.chapters[0].kind = "intro";
+    const fromIntro = splitChapter(original, "c1", 2, { title: "第二节", dropLine: false })!;
+    expect(fromIntro.chapters[1].kind).toBe("chapter");
+
+    original.chapters[0].kind = "extra";
+    const fromExtra = splitChapter(original, "c1", 2, { title: "后日谈", dropLine: false })!;
+    expect(fromExtra.chapters[1].kind).toBe("extra");
+
+    original.chapters[0].kind = "prologue";
+    const fromPrologue = splitChapter(original, "c1", 2, { title: "序章后篇", dropLine: false })!;
+    expect(fromPrologue.chapters[1].kind).toBe("chapter");
+  });
+
+  it("rejects a split whose original body is blank", () => {
+    const original = source();
+    original.chapters[0].lines = ["", " ", "正文"];
+    expect(splitChapter(original, "c1", 2, { title: "正文", dropLine: false })).toBeNull();
   });
 });
 

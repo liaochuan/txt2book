@@ -80,7 +80,7 @@ function fullOptions(overrides: Partial<PdfOptions> = {}): PdfOptions {
     pageNumbers: true,
     includeCover: true,
     includeTocPage: true,
-    includeTitlePage: true,
+    includeDescription: true,
     includeVolumePages: true,
     bookmarks: true,
     themeId: "paper",
@@ -537,7 +537,6 @@ describe("renderPdf", () => {
           includeVolumePages: false,
           includeCover: false,
           includeTocPage: false,
-          includeTitlePage: false,
         }),
       );
       const items = parseOutlineItems(result.buffer);
@@ -564,7 +563,6 @@ describe("renderPdf", () => {
         fullOptions({
           includeCover: false,
           includeTocPage: false,
-          includeTitlePage: false,
           includeVolumePages: false,
         }),
       );
@@ -767,5 +765,51 @@ describe("renderPdf limits", () => {
     await expect(renderPdf(book, fullOptions())).rejects.toMatchObject({
       code: "EXPORT_TOO_LARGE",
     });
+  });
+});
+
+describe("pdf description and title pages", () => {
+  const structuralOff = {
+    includeCover: false,
+    includeTocPage: false,
+    includeVolumePages: false,
+  } as const;
+
+  it("adds exactly one page for the description when enabled", async () => {
+    const off = await renderPdf(
+      makeBook(1),
+      fullOptions({ ...structuralOff, includeDescription: false }),
+    );
+    const on = await renderPdf(
+      makeBook(1),
+      fullOptions({ ...structuralOff, includeDescription: true }),
+    );
+
+    expect(on.pageCount).toBe(off.pageCount + 1);
+  });
+
+  it("never adds a title page for a single-chapter book", async () => {
+    const result = await renderPdf(
+      makeBook(1),
+      fullOptions({ ...structuralOff, includeDescription: false }),
+    );
+
+    expect(result.pageCount).toBe(1);
+  });
+
+  it("still produces one blank page for a completely empty book", async () => {
+    const empty: PdfBook = {
+      meta: { title: "空书", author: "", language: "zh-CN" },
+      volumes: [],
+      chapters: [],
+      cover: null,
+    };
+    const result = await renderPdf(
+      empty,
+      fullOptions({ ...structuralOff, includeDescription: false }),
+    );
+
+    expect(result.pageCount).toBe(1);
+    expect(result.pageCount).toBe(countPageObjects(result.buffer));
   });
 });

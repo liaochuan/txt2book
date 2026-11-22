@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import type { Chapter, Volume } from "../types/book";
 import ChapterRow from "./ChapterRow.vue";
 
@@ -17,6 +17,7 @@ const emit = defineEmits<{
   "remove-chapter": [id: string];
   "remove-volume": [id: string];
   rename: [payload: { id: string; title: string }];
+  "split-chapter": [id: string];
   undo: [];
 }>();
 
@@ -38,6 +39,18 @@ function readCollapsed(): string[] {
 
 const collapsedIds = ref<string[]>(readCollapsed());
 const query = ref("");
+const treeRoot = ref<HTMLElement | null>(null);
+/** 最近一次定位的章节；短暂高亮，便于在长目录中确认位置。 */
+const locatedId = ref<string | null>(null);
+let locateTimer: ReturnType<typeof setTimeout> | null = null;
+
+function persistCollapsed(): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(collapsedIds.value));
+  } catch {
+    // 隐私模式等场景下写入失败不影响交互，本次会话内仍保持折叠。
+  }
+}
 
 /** 搜索词归一化：去掉所有空白（含全角空格）并忽略大小写，避免用户复制标题时带空格。 */
 function normalize(value: string): string {
@@ -61,11 +74,7 @@ function toggle(volumeId: string): void {
     ? collapsedIds.value.filter((item) => item !== volumeId)
     : [...collapsedIds.value, volumeId];
 
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(collapsedIds.value));
-  } catch {
-    // 隐私模式等场景下写入失败不影响交互，本次会话内仍保持折叠。
-  }
+  persistCollapsed();
 }
 
 const totalCount = computed<number>(() => props.chapters.length);
@@ -175,10 +184,69 @@ const groups = computed<TreeGroup[]>(() => {
 
 const emptyTree = computed<boolean>(() => !searching.value && totalCount.value === 0);
 const emptyResult = computed<boolean>(() => searching.value && matchedChapters.value.length === 0);
+
+/** 在目录 DOM 中按 id 找到行；不用 querySelector，避免章节 id 需要 CSS 转义。 */
+function findRow(id: string): HTMLElement | null {
+  const rows = treeRoot.value?.querySelectorAll<HTMLElement>("[data-chapter-id]") ?? [];
+  for (const row of rows) {
+    if (row.dataset.chapterId === id) return row;
+  }
+  return null;
+}
+
+function flashLocated(id: string): void {
+  if (locateTimer !== null) clearTimeout(locateTimer);
+  locatedId.value = id;
+  locateTimer = setTimeout(() => {
+    locateTimer = null;
+    locatedId.value = null;
+  }, 1600);
+}
+
+/**
+ * 把指定章节滚动到可见位置：
+ * - 折叠的卷先展开；
+ * - 搜索过滤掉了目标时清空搜索；
+ * - 行渲染完成后调用 scrollIntoView，并短暂高亮。
+ */
+async function locate(id: string | null = props.selectedId): Promise<void> {
+  if (!id) return;
+  const target = props.chapters.find((chapter) => chapter.id === id);
+  if (!target) return;
+
+  if (target.volumeId !== null && collapsedIds.value.includes(target.volumeId)) {
+    collapsedIds.value = collapsedIds.value.filter((item) => item !== target.volumeId);
+    persistCollapsed();
+  }
+  if (searching.value && !matchedChapters.value.some((chapter) => chapter.id === id)) {
+    query.value = "";
+  }
+
+  await nextTick();
+  const row = findRow(id);
+  if (!row) return;
+
+  row.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  flashLocated(id);
+}
+
+watch(
+  () => props.selectedId,
+  (id) => {
+    if (id) void locate(id);
+  },
+  { flush: "post" },
+);
+
+onBeforeUnmount(() => {
+  if (locateTimer !== null) clearTimeout(locateTimer);
+});
+
+defineExpose({ locate });
 </script>
 
 <template>
-  <section class="card chapter-tree">
+  <section ref="treeRoot" class="card chapter-tree">
     <header class="tree-header">
       <div class="tree-heading">
         <h2 class="tree-title">章节目录</h2>
@@ -224,10 +292,12 @@ const emptyResult = computed<boolean>(() => searching.value && matchedChapters.v
             v-for="chapter in group.chapters"
             :key="chapter.id"
             :chapter="chapter"
+            :class="{ 'chapter-row-located': chapter.id === locatedId }"
             :selected="chapter.id === selectedId"
             :can-delete="canDeleteChapter"
             @select="emit('select', $event)"
             @rename="emit('rename', $event)"
+            @split="emit('split-chapter', $event)"
             @remove="emit('remove-chapter', $event)"
           />
         </ul>
@@ -305,10 +375,12 @@ const emptyResult = computed<boolean>(() => searching.value && matchedChapters.v
               v-for="chapter in group.chapters"
               :key="chapter.id"
               :chapter="chapter"
+              :class="{ 'chapter-row-located': chapter.id === locatedId }"
               :selected="chapter.id === selectedId"
               :can-delete="canDeleteChapter"
               @select="emit('select', $event)"
               @rename="emit('rename', $event)"
+              @split="emit('split-chapter', $event)"
               @remove="emit('remove-chapter', $event)"
             />
             <li v-if="group.chapters.length === 0" class="volume-empty">本卷暂无章节</li>

@@ -56,7 +56,7 @@ const firstAvailable = formats.value.find((item) => item.available) ?? formats.v
 const format = ref(firstAvailable?.id ?? "");
 
 const includeTocPage = ref(false);
-const includeTitlePage = ref(false);
+const includeDescription = ref(false);
 const includeVolumePages = ref(false);
 
 const selected = computed<ConverterMeta | null>(
@@ -127,7 +127,7 @@ const canExport = computed<boolean>(
 function options(): ConvertOptions {
   const result: ConvertOptions = {
     includeTocPage: includeTocPage.value,
-    includeTitlePage: includeTitlePage.value,
+    includeDescription: includeDescription.value,
     includeVolumePages: includeVolumePages.value,
   };
   // 没有格式专属选项时不写空对象，保持既有 payload 形状。
@@ -220,16 +220,16 @@ onBeforeUnmount(stopElapsedTimer);
       <div class="export-option-field">
         <label class="export-option">
           <input
-            v-model="includeTitlePage"
-            data-test="opt-title"
+            v-model="includeDescription"
+            data-test="opt-description"
             type="checkbox"
-            aria-describedby="hint-title"
+            aria-describedby="hint-description"
             :disabled="busy"
           />
-          <span>生成书名页</span>
+          <span>生成简介页</span>
         </label>
-        <p id="hint-title" class="option-hint" data-test="hint-title">
-          在封面后插入书名与作者页；有简介时仍会单独生成简介页。关闭后直接从正文开始。
+        <p id="hint-description" class="option-hint" data-test="hint-description">
+          有简介时在正文前插入简介页；关闭后书籍元数据里仍保留简介，只是书里不出现简介页。
         </p>
       </div>
 

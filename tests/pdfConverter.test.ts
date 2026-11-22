@@ -37,7 +37,7 @@ function makePayload(): PdfExportPayload {
     options: {
       themeId: "paper",
       includeTocPage: true,
-      includeTitlePage: false,
+      includeDescription: false,
       includeVolumePages: false,
       ...DEFAULT_FORMAT_OPTIONS,
       formatOptions: DEFAULT_FORMAT_OPTIONS,
@@ -148,7 +148,7 @@ describe("pdfConverter", () => {
     expect(payload.options).toMatchObject({
       themeId: "paper",
       includeTocPage: true,
-      includeTitlePage: false,
+      includeDescription: false,
       includeVolumePages: false,
       pageSize: "A4",
       margin: "normal",
@@ -168,7 +168,7 @@ describe("pdfConverter", () => {
       themeId: "night",
       layout,
       includeTocPage: false,
-      includeTitlePage: true,
+      includeDescription: true,
       includeVolumePages: true,
       formatOptions: {
         pageSize: "A5",
@@ -184,7 +184,7 @@ describe("pdfConverter", () => {
     expect(payload.options).toMatchObject({
       themeId: "night",
       includeTocPage: false,
-      includeTitlePage: true,
+      includeDescription: true,
       includeVolumePages: true,
       pageSize: "A5",
       margin: "narrow",

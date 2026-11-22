@@ -24,12 +24,13 @@ export interface FormatOption {
   choices?: FormatOptionChoice[];
 }
 
-/** 导出选项；未提供的字段按默认值处理（目录页 / 书名页 / 卷扉页默认关闭）。 */
+/** 导出选项；未提供的字段按默认值处理（目录页 / 简介页 / 卷扉页默认关闭）。 */
 export interface ConvertOptions {
   themeId?: ThemeId;
   /** 是否把 `nav.xhtml` 作为可见目录页排进阅读顺序；关闭时仍生成，但 `linear="no"`。 */
   includeTocPage?: boolean;
-  includeTitlePage?: boolean;
+  /** 是否生成简介页；关闭时书籍元数据中的简介仍然保留。 */
+  includeDescription?: boolean;
   /** 是否为每个卷生成卷扉页。 */
   includeVolumePages?: boolean;
   /** 高级排版与背景；未提供时各转换器按主题默认值处理。 */
@@ -73,7 +74,7 @@ export interface BookConverter extends ConverterMeta {
 
 /** `resolveConvertOptions` 补齐的字段；`layout` 留给转换器按主题决定默认值。 */
 export type ResolvedConvertOptions = Required<
-  Pick<ConvertOptions, "themeId" | "includeTocPage" | "includeTitlePage" | "includeVolumePages">
+  Pick<ConvertOptions, "themeId" | "includeTocPage" | "includeDescription" | "includeVolumePages">
 > & {
   /** 仅在调用方提供时透传，未提供则保持缺省，避免影响既有 payload。 */
   formatOptions?: Record<string, boolean | string>;
@@ -84,7 +85,7 @@ export function resolveConvertOptions(options: ConvertOptions = {}): ResolvedCon
   const resolved: ResolvedConvertOptions = {
     themeId: options.themeId ?? DEFAULT_THEME_ID,
     includeTocPage: options.includeTocPage ?? false,
-    includeTitlePage: options.includeTitlePage ?? false,
+    includeDescription: options.includeDescription ?? false,
     includeVolumePages: options.includeVolumePages ?? false,
   };
   if (options.formatOptions) resolved.formatOptions = options.formatOptions;

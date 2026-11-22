@@ -4,6 +4,7 @@ import App from "../src/App.vue";
 import CalibreLibraryDialog from "../src/components/CalibreLibraryDialog.vue";
 import ChapterTree from "../src/components/ChapterTree.vue";
 import CoverPanel from "../src/components/CoverPanel.vue";
+import SplitChapterDialog from "../src/components/SplitChapterDialog.vue";
 import { useAuth } from "../src/composables/useAuth";
 import { useBookSession } from "../src/composables/useBookSession";
 import type { UseCalibre } from "../src/composables/useCalibre";
@@ -74,6 +75,10 @@ function seedLinkedSession(title = "测试书", formats: string[] = ["TXT"]) {
   return session;
 }
 
+async function openChapterMenu(wrapper: VueWrapper, index = 0): Promise<void> {
+  await wrapper.findAll('[data-test="chapter-menu"]')[index].trigger("click");
+}
+
 const CALIBRE_BASE_URL = "https://calibre.example.com/calibre";
 const EMPTY_FEED =
   '<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>书库</title></feed>';
@@ -89,6 +94,8 @@ function stubCalibreApi(
     pushStatus?: number;
     pushCode?: string;
     pushMessage?: string;
+    /** 挂起推送响应，便于断言推送进行中的界面状态。 */
+    pushGate?: Promise<void>;
   } = {},
 ): CalibreApiStub {
   const state: CalibreApiStub = { pushCalls: 0 };
@@ -133,6 +140,7 @@ function stubCalibreApi(
             options.pushStatus,
           );
         }
+        if (options.pushGate) await options.pushGate;
         return new Response(null, { status: 204 });
       }
       return jsonResponse({ error: { code: "NOT_FOUND", message: "未找到" } }, 404);
@@ -388,6 +396,152 @@ describe("App", () => {
     expect(wrapper.find("form.login-card").exists()).toBe(false);
   });
 
+  it("shows chapter warnings and opens the split dialog", async () => {
+    stubSessionApi(true);
+    const session = useBookSession();
+    session.loadBook(
+      { title: "测试书", author: "", language: "zh-CN" },
+      {
+        volumes: [],
+        chapters: [
+          { id: "c1", title: "第1章 一", kind: "chapter", lines: ["甲", "第2章 漏了"], volumeId: null },
+          { id: "c3", title: "第3章 三", kind: "chapter", lines: ["丙"], volumeId: null },
+        ],
+      },
+      "测试书",
+    );
+    const wrapper = mount(App, { props: { session } });
+
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+    );
+
+    expect(wrapper.find('[data-test="chapter-warnings"]').exists()).toBe(true);
+    await openChapterMenu(wrapper);
+    await wrapper.get('[data-test="split-chapter"]').trigger("click");
+
+    expect(document.body.querySelector('[data-test="split-dialog"]')).not.toBeNull();
+  });
+
+  it("splits from a warning and clears the suspected heading", async () => {
+    stubSessionApi(true);
+    const session = useBookSession();
+    session.loadBook(
+      { title: "测试书", author: "", language: "zh-CN" },
+      {
+        volumes: [],
+        chapters: [
+          {
+            id: "c1",
+            title: "第1章 一",
+            kind: "chapter",
+            lines: ["甲", "", "第2章 漏了", "乙"],
+            volumeId: null,
+          },
+          { id: "c3", title: "第3章 三", kind: "chapter", lines: ["丙"], volumeId: null },
+        ],
+      },
+      "测试书",
+    );
+    const wrapper = mount(App, { props: { session } });
+
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+    );
+    expect(wrapper.get('[data-test="chapter-warnings"]').text()).toContain("疑似标题");
+
+    await wrapper.get('[data-test="warning-split-0"]').trigger("click");
+    const confirm = document.body.querySelector<HTMLButtonElement>(
+      '[data-test="split-confirm"]',
+    );
+    expect(confirm?.disabled).toBe(false);
+    confirm?.click();
+
+    await vi.waitFor(() => expect(session.book.value.chapters).toHaveLength(3));
+    expect(session.book.value.chapters[1].title).toBe("第2章 漏了");
+    expect(session.book.value.chapters[1].lines).toEqual(["乙"]);
+    expect(wrapper.find('[data-test="chapter-warnings"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain("已拆分出新章节「第2章 漏了」");
+  });
+
+  it("keeps the dialog open and shows an error toast when a split fails", async () => {
+    stubSessionApi(true);
+    const session = useBookSession();
+    session.loadBook(
+      { title: "测试书", author: "", language: "zh-CN" },
+      {
+        volumes: [],
+        chapters: [
+          { id: "c1", title: "第1章 一", kind: "chapter", lines: ["甲", "乙", ""], volumeId: null },
+          { id: "c2", title: "第2章 二", kind: "chapter", lines: ["丙"], volumeId: null },
+        ],
+      },
+      "测试书",
+    );
+    const wrapper = mount(App, { props: { session } });
+
+    await vi.waitFor(() =>
+      expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+    );
+
+    await openChapterMenu(wrapper);
+    await wrapper.get('[data-test="split-chapter"]').trigger("click");
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[data-test="split-dialog"]')).not.toBeNull(),
+    );
+
+    const dialog = wrapper.findComponent(SplitChapterDialog);
+    dialog.vm.$emit("split", {
+      chapterId: "c1",
+      lineIndex: 0,
+      title: "无效切分",
+      dropLine: false,
+    });
+
+    await vi.waitFor(() => expect(wrapper.find(".toast-error").exists()).toBe(true));
+    expect(wrapper.find(".toast-error").text()).toContain("无法在该位置分章");
+    expect(wrapper.text()).not.toContain("已拆分出新章节");
+    expect(session.book.value.chapters).toHaveLength(2);
+    expect(session.canUndo.value).toBe(false);
+    expect(document.body.querySelector('[data-test="split-dialog"]')).not.toBeNull();
+  });
+
+  it("locates the chapter when a warning issue is clicked", async () => {
+    stubSessionApi(true);
+    const session = useBookSession();
+    session.loadBook(
+      { title: "测试书", author: "", language: "zh-CN" },
+      {
+        volumes: [],
+        chapters: [
+          { id: "c1", title: "第1章 一", kind: "chapter", lines: ["甲"], volumeId: null },
+          { id: "c3", title: "第3章 三", kind: "chapter", lines: ["丙"], volumeId: null },
+        ],
+      },
+      "测试书",
+    );
+    const scroll = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      value: scroll,
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      const wrapper = mount(App, { props: { session } });
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+      );
+
+      await wrapper.get('[data-test="warning-issue-0"]').trigger("click");
+
+      await vi.waitFor(() => expect(scroll).toHaveBeenCalled());
+      expect(wrapper.get('[data-chapter-id="c3"]').classes()).toContain("chapter-row-located");
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
   it("keeps the preview and the tree selection in sync", async () => {
     stubSessionApi(true);
     const session = seedSession();
@@ -463,6 +617,7 @@ describe("App", () => {
       expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
     );
 
+    await openChapterMenu(wrapper);
     await wrapper.findAll('[data-test="delete-chapter"]')[0].trigger("click");
 
     expect(session.book.value.chapters).toHaveLength(1);
@@ -485,6 +640,7 @@ describe("App", () => {
     );
 
     const deleteFirstRow = async (): Promise<void> => {
+      await openChapterMenu(wrapper);
       await wrapper.findAll('[data-test="delete-chapter"]')[0].trigger("click");
     };
     await deleteFirstRow();
@@ -613,7 +769,7 @@ describe("App", () => {
       expect(convert.mock.calls[0]?.[1]).toMatchObject({
         themeId: "paper",
         includeTocPage: false,
-        includeTitlePage: false,
+        includeDescription: false,
         includeVolumePages: false,
         layout: expect.any(Object),
       });
@@ -790,6 +946,43 @@ describe("App", () => {
       expect(calibreApi.pushCalls).toBe(1);
       expect(exportStub.downloads).toHaveLength(0);
       expect(wrapper.get(".toast-success").text()).toContain("已推送到 Calibre-Web「测试书」");
+    } finally {
+      exportStub.restore();
+    }
+  });
+
+  it("shows pushing progress instead of downloading in push-only mode", async () => {
+    let releasePush: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releasePush = resolve;
+    });
+    stubCalibreApi({ pushGate: gate });
+    const exportStub = stubExport();
+
+    try {
+      const wrapper = mount(App, { props: { session: seedLinkedSession() } });
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="workspace"]').exists()).toBe(true),
+      );
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-test="push-mode"]').exists()).toBe(true),
+      );
+
+      await wrapper.get('[data-test="push-mode"]').setValue("push-only");
+      await wrapper.get('[data-test="export"]').trigger("click");
+
+      await vi.waitFor(() =>
+        expect(wrapper.get('[data-test="export-progress-message"]').text()).toContain(
+          "正在推送到 Calibre-Web",
+        ),
+      );
+      expect(wrapper.get('[data-test="export-progress-message"]').text()).not.toContain(
+        "正在下载",
+      );
+      expect(exportStub.downloads).toHaveLength(0);
+
+      releasePush();
+      await vi.waitFor(() => expect(wrapper.find(".toast-success").exists()).toBe(true));
     } finally {
       exportStub.restore();
     }
@@ -1470,7 +1663,7 @@ describe("App", () => {
     expect(wrapper.find(".workspace-col-side > .upload-panel").exists()).toBe(true);
   });
 
-  it("collapses the typography card from its summary", async () => {
+  it("starts with the typography card collapsed and expands from its summary", async () => {
     stubSessionApi(true);
     const wrapper = mount(App, { props: { session: seedSession() } });
 
@@ -1480,7 +1673,7 @@ describe("App", () => {
 
     const card = wrapper.get('[data-test="layout-card"]');
     expect(card.element.tagName).toBe("DETAILS");
-    expect((card.element as HTMLDetailsElement).open).toBe(true);
+    expect((card.element as HTMLDetailsElement).open).toBe(false);
     expect(card.get("summary").find(".disclosure-caret").exists()).toBe(true);
     expect(wrapper.find(".layout-card-caret").exists()).toBe(false);
     expect(card.get("summary").text()).toContain("排版");
@@ -1490,6 +1683,6 @@ describe("App", () => {
 
     await card.get("summary").trigger("click");
 
-    expect((card.element as HTMLDetailsElement).open).toBe(false);
+    expect((card.element as HTMLDetailsElement).open).toBe(true);
   });
 });

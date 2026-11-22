@@ -18,7 +18,7 @@ const book: BookModel = {
 const options: ConvertOptions = {
   themeId: "paper",
   includeTocPage: true,
-  includeTitlePage: true,
+  includeDescription: true,
   includeVolumePages: true,
 };
 
@@ -68,16 +68,19 @@ describe("buildEpub", () => {
       await (
         await buildEpub(book, {
           ...options,
-          includeTitlePage: false,
+          includeDescription: false,
           includeTocPage: false,
           includeVolumePages: false,
         })
       ).arrayBuffer(),
     );
     expect(zip.file("OEBPS/titlepage.xhtml")).toBeNull();
+    expect(zip.file("OEBPS/description.xhtml")).toBeNull();
     expect(zip.file("OEBPS/volume-1.xhtml")).toBeNull();
     const opf = await zip.file("OEBPS/content.opf")!.async("string");
     expect(opf).toMatch(/idref="nav"[^>]*linear="no"/);
+    // 关闭简介页不删除元数据里的简介。
+    expect(opf).toContain("<dc:description>简介</dc:description>");
   });
 });
 
@@ -94,22 +97,23 @@ describe("buildEpub entry order", () => {
 });
 
 describe("buildEpub structure", () => {
-  it("renders cover page, title page and volume page", async () => {
+  it("renders cover page, description page and volume page", async () => {
     const { zip, text } = await build();
     const cover = await text("OEBPS/cover.xhtml");
     expect(cover).toContain('src="images/cover.png"');
     expect(cover).toContain('<body class="txt2book cover-page">');
 
-    const titlepage = await text("OEBPS/titlepage.xhtml");
-    expect(titlepage).toContain('<h1 class="book-title">测试书</h1>');
-    expect(titlepage).toContain('<p class="book-author">作者</p>');
+    expect(zip.file("OEBPS/titlepage.xhtml")).toBeNull();
+    const description = await text("OEBPS/description.xhtml");
+    expect(description).toContain('<h1 class="description-title">简介</h1>');
+
     expect(zip.file("OEBPS/volume-1.xhtml")).toBeTruthy();
     const volume = await text("OEBPS/volume-1.xhtml");
     expect(volume).toContain('<h1 class="volume-title">第一卷</h1>');
   });
 
-  it("emits a standalone description page even without a title page", async () => {
-    const { zip, text } = await build(book, { ...options, includeTitlePage: false });
+  it("emits a standalone description page only when enabled", async () => {
+    const { zip, text } = await build(book, options);
     expect(zip.file("OEBPS/titlepage.xhtml")).toBeNull();
     expect(zip.file("OEBPS/description.xhtml")).toBeTruthy();
 
@@ -121,6 +125,9 @@ describe("buildEpub structure", () => {
     const opf = await text("OEBPS/content.opf");
     expect(opf).toMatch(/<itemref idref="description"\/>/);
     expect(opf.indexOf('idref="description"')).toBeLessThan(opf.indexOf('idref="nav"'));
+
+    const without = await build(book, { ...options, includeDescription: false });
+    expect(without.zip.file("OEBPS/description.xhtml")).toBeNull();
   });
 
   it("keeps paragraph breaks in the description page", async () => {
@@ -183,11 +190,11 @@ describe("buildEpub structure", () => {
     expect(ncx).toContain('src="volume-1.xhtml"');
   });
 
-  it("orders the spine cover → title → description → nav → volume → chapters", async () => {
+  it("orders the spine cover → description → nav → volume → chapters", async () => {
     const { text } = await build();
     const opf = await text("OEBPS/content.opf");
     expect(opf).toMatch(
-      /<itemref idref="cover-page"\/>\s*<itemref idref="titlepage"\/>\s*<itemref idref="description"\/>\s*<itemref idref="nav"\/>\s*<itemref idref="volume-1"\/>\s*<itemref idref="chapter-1"\/>\s*<itemref idref="chapter-2"\/>/,
+      /<itemref idref="cover-page"\/>\s*<itemref idref="description"\/>\s*<itemref idref="nav"\/>\s*<itemref idref="volume-1"\/>\s*<itemref idref="chapter-1"\/>\s*<itemref idref="chapter-2"\/>/,
     );
   });
 
@@ -257,9 +264,6 @@ describe("buildEpub structure", () => {
     const nav = await text("OEBPS/nav.xhtml");
     expect(nav).toContain("书 &amp; &lt;名&gt;");
     expect(nav).toContain("第一章 &quot;引&quot; &amp; &lt;号&gt;");
-    const titlepage = await text("OEBPS/titlepage.xhtml");
-    expect(titlepage).toContain("<h1 class=\"book-title\">书 &amp; &lt;名&gt;</h1>");
-    expect(titlepage).toContain("甲 &amp; 乙");
     const chapter = await text("OEBPS/text/chapter-1.xhtml");
     expect(chapter).toContain("<p>a &amp; b</p>");
   });
@@ -289,6 +293,7 @@ describe("buildEpub structure", () => {
   it("applies the default options when none are given", async () => {
     const { zip, text } = await build(book, {});
     expect(zip.file("OEBPS/titlepage.xhtml")).toBeNull();
+    expect(zip.file("OEBPS/description.xhtml")).toBeNull();
     expect(zip.file("OEBPS/volume-1.xhtml")).toBeNull();
     const opf = await text("OEBPS/content.opf");
     expect(opf).toMatch(/idref="nav"[^>]*linear="no"/);
@@ -396,8 +401,6 @@ describe("buildEpub structure", () => {
     expect(nav).toContain("书名");
     expect(nav).toContain("章节");
 
-    const titlepage = await text("OEBPS/titlepage.xhtml");
-    expect(titlepage).not.toMatch(invalid);
     const description = await text("OEBPS/description.xhtml");
     expect(description).not.toMatch(invalid);
     const opf = await text("OEBPS/content.opf");
@@ -515,7 +518,6 @@ describe("volume lines", () => {
     const { zip, text } = await build(source, {
       ...options,
       includeTocPage: false,
-      includeTitlePage: false,
       includeVolumePages: false,
     });
 
@@ -540,8 +542,6 @@ describe("theme coverage", () => {
       for (const selector of [
         ".cover-page",
         ".cover-image",
-        ".book-title",
-        ".book-author",
         ".volume-page",
         ".volume-title",
         ".volume-note-block",

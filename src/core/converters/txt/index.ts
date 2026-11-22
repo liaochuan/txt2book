@@ -100,24 +100,15 @@ export async function buildTxt(
     "includeVolumeTitles",
     DEFAULT_INCLUDE_VOLUME_TITLES,
   );
-  const includeDescription = readBoolean(opts.formatOptions, "includeDescription", true);
 
   const output: string[] = [];
-
-  if (opts.includeTitlePage) {
-    const title = book.meta.title.trim() || "未命名";
-    const titlePage = [title];
-    const author = book.meta.author.trim();
-    if (author) titlePage.push(author);
-    pushBlock(output, titlePage);
-  }
 
   const chapters = book.chapters.filter(
     (chapter) => includeIntro || chapter.kind !== "intro",
   );
 
   const description = book.meta.description?.trim();
-  if (includeDescription && description) {
+  if (opts.includeDescription && description) {
     pushBlock(output, descriptionBlock(description));
   }
 
@@ -210,13 +201,6 @@ export const txtConverter: BookConverter = {
       type: "boolean",
       defaultValue: true,
       hint: "在正文中输出分卷标题与番外分组标题；关闭后卷标题与卷首文字都不输出。",
-    },
-    {
-      key: "includeDescription",
-      label: "包含书籍简介",
-      type: "boolean",
-      defaultValue: true,
-      hint: "输出书籍简介（meta.description）；与正文中解析出的“简介”章节不同，只影响书籍元数据里的简介。",
     },
   ],
   convert: buildTxt,

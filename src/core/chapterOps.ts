@@ -29,6 +29,64 @@ function createChapterId(): string {
   return `chapter-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+/** 去掉首尾空白行，保留内部空行；空正文返回空数组。 */
+function trimBlankEdges(lines: string[]): string[] {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && (lines[start] ?? "").trim() === "") start += 1;
+  while (end > start && (lines[end - 1] ?? "").trim() === "") end -= 1;
+  return lines.slice(start, end);
+}
+
+export interface SplitChapterOptions {
+  /** 新章节标题；缺省时用被选中行（dropLine）或“新章节”。 */
+  title?: string;
+  /** 被选中的行作为标题，从新章节正文中移除。 */
+  dropLine?: boolean;
+}
+
+/**
+ * 从 `lineIndex` 起把章节正文拆成新章节，新章节紧随原章节。
+ * `lineIndex` 必须在 1..lines.length-1 之间，且两半都不能只剩空白行；
+ * 无法拆分时返回 `null`，调用方不应产生撤销点或成功提示。
+ */
+export function splitChapter(
+  book: BookModel,
+  chapterId: string,
+  lineIndex: number,
+  options: SplitChapterOptions = {},
+): BookModel | null {
+  const index = book.chapters.findIndex((chapter) => chapter.id === chapterId);
+  if (index < 0) return null;
+
+  const chapter = book.chapters[index];
+  if (!Number.isInteger(lineIndex) || lineIndex <= 0 || lineIndex >= chapter.lines.length) {
+    return null;
+  }
+
+  const dropLine = options.dropLine === true;
+  const fallbackTitle = dropLine ? (chapter.lines[lineIndex] ?? "").trim() : "";
+  const title = options.title?.trim() || fallbackTitle || "新章节";
+  const movedStart = dropLine ? lineIndex + 1 : lineIndex;
+  const originalLines = trimBlankEdges(chapter.lines.slice(0, lineIndex));
+  const movedLines = trimBlankEdges(chapter.lines.slice(movedStart));
+  if (originalLines.length === 0 || movedLines.length === 0) return null;
+
+  const created: Chapter = {
+    id: createChapterId(),
+    title,
+    originalTitle: title,
+    // 只有番外保持分组语义，序章/尾声拆分后的后半段按普通章节处理。
+    kind: chapter.kind === "extra" ? "extra" : "chapter",
+    lines: movedLines,
+    volumeId: chapter.volumeId,
+  };
+  const chapters = [...book.chapters];
+  chapters.splice(index, 1, { ...chapter, lines: originalLines }, created);
+
+  return { ...copyBook(book), chapters };
+}
+
 /** 修改章节标题，首次改名时把原标题记入 `originalTitle`。 */
 export function renameChapter(book: BookModel, chapterId: string, title: string): BookModel {
   const index = book.chapters.findIndex((chapter) => chapter.id === chapterId);

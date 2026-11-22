@@ -464,7 +464,7 @@ describe("useCalibre", () => {
         title: "a/b:c",
         authors: ["刘慈欣", "另一位"],
         language: "zho",
-        summary: "真正的简介",
+        summary: "第一段\n第二段",
         formats: ["TXT", "EPUB"],
         hasCover: true,
       });
@@ -485,7 +485,7 @@ describe("useCalibre", () => {
         title: "a/b:c",
         author: "刘慈欣、另一位",
         language: "zh-CN",
-        description: "真正的简介",
+        description: "　　第一段\n　　第二段",
       });
       expect(options?.source).toEqual({
         kind: "calibre-web",

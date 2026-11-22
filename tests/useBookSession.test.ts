@@ -503,4 +503,41 @@ describe("useBookSession", () => {
     expect(session.book.value.source?.formats).toEqual(["TXT", "EPUB"]);
     expect(session.canUndo.value).toBe(undoBefore);
   });
+
+  it("splits a chapter and undoes it", () => {
+    const session = useBookSession();
+    session.loadBook(
+      META,
+      {
+        volumes: [],
+        chapters: [
+          { id: "c1", title: "第1章", kind: "chapter", lines: ["a", "b"], volumeId: null },
+        ],
+      },
+      "书",
+    );
+    expect(session.splitChapter("c1", 1, { title: "第2章", dropLine: false })).toBe(true);
+    expect(session.book.value.chapters).toHaveLength(2);
+    expect(session.book.value.chapters[1].lines).toEqual(["b"]);
+    expect(session.canUndo.value).toBe(true);
+    session.undo();
+    expect(session.book.value.chapters).toHaveLength(1);
+  });
+
+  it("rejects an invalid split without creating an undo entry", () => {
+    const session = useBookSession();
+    session.loadBook(
+      META,
+      {
+        volumes: [],
+        chapters: [
+          { id: "c1", title: "第1章", kind: "chapter", lines: ["a", "b"], volumeId: null },
+        ],
+      },
+      "书",
+    );
+    expect(session.splitChapter("c1", 0)).toBe(false);
+    expect(session.book.value.chapters).toHaveLength(1);
+    expect(session.canUndo.value).toBe(false);
+  });
 });

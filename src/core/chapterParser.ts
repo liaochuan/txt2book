@@ -7,7 +7,7 @@ export interface ParsedBook {
   chapters: Chapter[];
 }
 
-const CN_NUM_BODY = "[0-9０-９零一二三四五六七八九十百千万两〇○壹贰叁肆伍陆柒捌玖拾]";
+const CN_NUM_BODY = "[0-9０-９零一二三四五六七八九十百千万两〇○壹贰叁肆伍陆柒捌玖拾佰仟]";
 const CN_NUM = `${CN_NUM_BODY}+`;
 const SEP = "[\\s·、，,：:.．—\\-]+";
 
@@ -96,14 +96,40 @@ function matchUserRule(pattern: UserPattern, line: string): TitleHit | null {
 }
 
 /**
+ * 章节标记后面必须是行尾或分隔符，用于区分标题和正文句子：
+ * `第一章的内容…`、`第一回合…` 在章/回后直接跟汉字，不算标题。
+ */
+const CHAPTER_HEAD = new RegExp(
+  `^(?:[0-9]{1,4}[.、]\\s*)?(?:第${CN_NUM}[章回]|Chapter\\s*[0-9]+)(?=$|${SEP})`,
+  "i",
+);
+
+/** 判断一行是否具备章节标题结构（忽略标点与长度限制）。 */
+export function looksLikeChapterTitle(line: string): boolean {
+  return matches(CHAPTER_HEAD, line.trim());
+}
+
+/**
  * 判断一行是否为标题。先 trim，再排除过长或句末带标点的正文行；
  * 用户规则优先，内置规则按 卷 → 章 → 番外 → 楔子 → 尾声 兜底。
  * 内置规则的标题取整行 trim，保留原编号文字。
+ *
+ * 以句末标点结尾的标题（如 `第7章 啊？神器？`）只有在满足以下条件时才接受：
+ * - 具备章节结构（卷、番外、楔子、尾声不享受豁免）；
+ * - 与前文空行隔离，或紧跟在已识别的标题之后。
+ * 正文里夹带的 `第一章的内容，…` / `第一回合，…` 结构不完整，仍按正文处理。
  */
-function classifyTitle(line: string, userPatterns: UserPattern[]): TitleHit | null {
+function classifyTitle(
+  line: string,
+  isolated: boolean,
+  userPatterns: UserPattern[],
+): TitleHit | null {
   const title = line.trim();
   if (!title) return null;
-  if (title.length > MAX_TITLE_LENGTH || TITLE_END.test(title)) return null;
+  if (title.length > MAX_TITLE_LENGTH) return null;
+  if (TITLE_END.test(title) && !(isolated && looksLikeChapterTitle(title))) {
+    return null;
+  }
 
   for (const pattern of userPatterns) {
     const hit = matchUserRule(pattern, title);
@@ -163,9 +189,17 @@ export function parseChapters(
 
   const userPatterns = compileUserRules(userRules);
   const hits: Array<{ index: number } & TitleHit> = [];
+  let previousWasTitle = false;
   lines.forEach((line, index) => {
-    const hit = classifyTitle(line, userPatterns);
-    if (hit) hits.push({ index, ...hit });
+    const isolated =
+      index === 0 || previousWasTitle || (lines[index - 1] ?? "").trim() === "";
+    const hit = classifyTitle(line, isolated, userPatterns);
+    if (hit) {
+      hits.push({ index, ...hit });
+      previousWasTitle = true;
+      return;
+    }
+    previousWasTitle = false;
   });
 
   if (hits.length === 0) {

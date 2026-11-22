@@ -134,7 +134,7 @@ export async function buildPdf(
       themeId: opts.themeId,
       // PDF 只有“目录页”一个开关，直接决定是否排入目录页。
       includeTocPage: includeToc,
-      includeTitlePage: opts.includeTitlePage,
+      includeDescription: opts.includeDescription,
       includeVolumePages: opts.includeVolumePages,
       formatOptions,
     },

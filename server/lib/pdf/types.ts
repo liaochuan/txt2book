@@ -115,7 +115,7 @@ export interface PdfOptions {
   pageNumbers?: boolean;
   includeCover?: boolean;
   includeTocPage?: boolean;
-  includeTitlePage?: boolean;
+  includeDescription?: boolean;
   includeVolumePages?: boolean;
   bookmarks?: boolean;
   themeId?: string;

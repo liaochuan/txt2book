@@ -51,7 +51,7 @@ type ExportPayload = {
   format: string;
   options: {
     includeTocPage: boolean;
-    includeTitlePage: boolean;
+    includeDescription: boolean;
     includeVolumePages: boolean;
     formatOptions?: Record<string, boolean | string>;
   };
@@ -99,7 +99,7 @@ describe("ExportPanel", () => {
           format: "epub",
           options: {
             includeTocPage: false,
-            includeTitlePage: false,
+            includeDescription: false,
             includeVolumePages: false,
           },
         },
@@ -110,15 +110,15 @@ describe("ExportPanel", () => {
   it("renders the content options unchecked with an explanation under each one", () => {
     const wrapper = mountPanel();
 
-    for (const key of ["opt-toc", "opt-title", "opt-volume"]) {
+    for (const key of ["opt-toc", "opt-description", "opt-volume"]) {
       expect((wrapper.get(`[data-test="${key}"]`).element as HTMLInputElement).checked).toBe(false);
     }
 
     expect(wrapper.get('[data-test="hint-toc"]').text()).toBe(
       "在正文前插入一页可翻阅的目录。关闭后阅读器自带的导航目录仍然可用，只是书里不出现目录页。",
     );
-    expect(wrapper.get('[data-test="hint-title"]').text()).toBe(
-      "在封面后插入书名与作者页；有简介时仍会单独生成简介页。关闭后直接从正文开始。",
+    expect(wrapper.get('[data-test="hint-description"]').text()).toBe(
+      "有简介时在正文前插入简介页；关闭后书籍元数据里仍保留简介，只是书里不出现简介页。",
     );
     expect(wrapper.get('[data-test="hint-volume"]').text()).toBe(
       "为每个卷生成独立标题页，并展示卷首文字。关闭后卷首文字会以居中样式并入该卷第一章开头，不会丢失。",
@@ -126,7 +126,7 @@ describe("ExportPanel", () => {
 
     for (const [option, hint] of [
       ["opt-toc", "hint-toc"],
-      ["opt-title", "hint-title"],
+      ["opt-description", "hint-description"],
       ["opt-volume", "hint-volume"],
     ]) {
       expect(wrapper.get(`[data-test="${option}"]`).attributes("aria-describedby")).toBe(hint);
@@ -138,6 +138,7 @@ describe("ExportPanel", () => {
     const wrapper = mountPanel();
 
     await wrapper.get('[data-test="opt-toc"]').setValue(true);
+    await wrapper.get('[data-test="opt-description"]').setValue(true);
     await wrapper.get('[data-test="opt-volume"]').setValue(true);
     await wrapper.get('[data-test="export"]').trigger("click");
 
@@ -147,7 +148,7 @@ describe("ExportPanel", () => {
           format: "epub",
           options: {
             includeTocPage: true,
-            includeTitlePage: false,
+            includeDescription: true,
             includeVolumePages: true,
           },
         },

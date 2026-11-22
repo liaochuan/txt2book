@@ -57,7 +57,6 @@ describe("buildTxt", () => {
         formatOptions: {
           includeIntro: false,
           includeVolumeTitles: true,
-          includeDescription: false,
         },
       })
     ).text();
@@ -78,15 +77,10 @@ describe("buildTxt", () => {
     expect(text).toContain("番外一");
   });
 
-  it("writes the title page only when includeTitlePage is true", async () => {
-    const withTitle = await (
-      await buildTxt(book, { includeTitlePage: true })
-    ).text();
-    expect(withTitle.startsWith("测试书\n作者甲\n\n")).toBe(true);
-
-    const withoutTitle = await (await buildTxt(book)).text();
-    expect(withoutTitle).not.toContain("作者甲");
-    expect(withoutTitle).not.toContain("测试书");
+  it("never writes a title page", async () => {
+    const text = await (await buildTxt(book)).text();
+    expect(text.startsWith("测试书")).toBe(false);
+    expect(text).not.toContain("作者甲");
   });
 
   it("includes intro, volume titles and volume lines by default", async () => {
@@ -98,31 +92,29 @@ describe("buildTxt", () => {
     expect(text.indexOf("这是简介。")).toBeLessThan(text.indexOf("第一卷 风起"));
   });
 
-  it("includes the book description by default before volumes and chapters", async () => {
+  it("includes the book description when includeDescription is true", async () => {
     const described: BookModel = {
       ...book,
       meta: { ...book.meta, description: "简介第一段。\n\n\n简介第二段。   " },
     };
 
-    const text = await (await buildTxt(described)).text();
+    const text = await (await buildTxt(described, { includeDescription: true })).text();
 
     expect(text).toMatch(/简介\n\n简介第一段。\n\n简介第二段。/);
     expect(text.indexOf("简介第一段。")).toBeLessThan(text.indexOf("第一卷 风起"));
     expect(text).not.toMatch(/\n{3,}/);
   });
 
-  it("omits the book description when includeDescription is false", async () => {
-    const text = await (
-      await buildTxt(book, { formatOptions: { includeDescription: false } })
-    ).text();
+  it("omits the book description by default and when includeDescription is false", async () => {
+    expect((await (await buildTxt(book)).text())).not.toContain("简介文字");
 
-    expect(text).not.toContain("简介第一段。");
+    const text = await (await buildTxt(book, { includeDescription: false })).text();
     expect(text).not.toContain("简介文字");
   });
 
   it("writes no description heading when the book has no description", async () => {
     const noDescription: BookModel = {
-      meta: { ...book.meta, description: undefined },
+      meta: { ...book.meta, description: "   " },
       volumes: [book.volumes[0]],
       chapters: [
         { id: "c1", title: "第一章 重逢", kind: "chapter", lines: ["正文一"], volumeId: "v1" },
@@ -130,7 +122,7 @@ describe("buildTxt", () => {
       cover: null,
     };
 
-    const text = await (await buildTxt(noDescription)).text();
+    const text = await (await buildTxt(noDescription, { includeDescription: true })).text();
 
     expect(text).not.toMatch(/^简介$/m);
     expect(text).toContain("第一章 重逢");
@@ -224,16 +216,12 @@ describe("buildTxt", () => {
     expect(txtConverter.options).toEqual([
       expect.objectContaining({ key: "includeIntro", type: "boolean", defaultValue: true }),
       expect.objectContaining({ key: "includeVolumeTitles", type: "boolean", defaultValue: true }),
-      expect.objectContaining({ key: "includeDescription", type: "boolean", defaultValue: true }),
     ]);
 
-    // 未传 formatOptions 时三个选项都按默认开启。
     expect(txtConverter.options?.map((option) => option.key)).toEqual([
       "includeIntro",
       "includeVolumeTitles",
-      "includeDescription",
     ]);
     expect(txtConverter.options?.[1]?.hint).toContain("卷标题与卷首文字都不输出");
-    expect(txtConverter.options?.[2]?.hint).toContain("meta.description");
   });
 });

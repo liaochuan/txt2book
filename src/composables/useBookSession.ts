@@ -4,7 +4,9 @@ import {
   deleteChapter,
   deleteVolume,
   renameChapter,
+  splitChapter as splitChapterOp,
   type History,
+  type SplitChapterOptions,
 } from "../core/chapterOps";
 import type { ParsedBook } from "../core/chapterParser";
 import type {
@@ -40,6 +42,8 @@ export interface BookSession {
   select(id: string | null): void;
   selectVolume(id: string): void;
   rename(id: string, title: string): void;
+  /** 从章节正文的 `lineIndex` 处分章，新章节紧随原章节；无效切分返回 false。 */
+  splitChapter(id: string, lineIndex: number, options?: SplitChapterOptions): boolean;
   removeChapter(id: string): void;
   removeVolume(id: string): void;
   undo(): void;
@@ -225,6 +229,13 @@ export function useBookSession(): BookSession {
     commit(renameChapter(book.value, id, title));
   }
 
+  function splitChapter(id: string, lineIndex: number, options?: SplitChapterOptions): boolean {
+    const next = splitChapterOp(book.value, id, lineIndex, options);
+    if (!next) return false;
+    commit(next);
+    return true;
+  }
+
   function removeChapter(id: string): void {
     const current = book.value;
     const index = current.chapters.findIndex((chapter) => chapter.id === id);
@@ -316,6 +327,7 @@ export function useBookSession(): BookSession {
     select,
     selectVolume,
     rename,
+    splitChapter,
     removeChapter,
     removeVolume,
     undo,

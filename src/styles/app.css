@@ -683,8 +683,9 @@ select {
 }
 
 .chapter-row {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-1) var(--space-2);
@@ -698,6 +699,22 @@ select {
 .chapter-row-selected {
   background: var(--primary-soft);
   box-shadow: inset 2px 0 0 var(--primary);
+}
+
+/* 从校验提醒或预览定位后短暂高亮，帮助在长目录中确认目标。 */
+.chapter-row-located {
+  animation: chapter-locate 1.6s ease-out;
+}
+
+@keyframes chapter-locate {
+  0% {
+    background: var(--primary-soft);
+    box-shadow: inset 3px 0 0 var(--primary);
+  }
+  100% {
+    background: transparent;
+    box-shadow: inset 3px 0 0 transparent;
+  }
 }
 
 .chapter-title {
@@ -730,25 +747,68 @@ select {
   white-space: nowrap;
 }
 
-.chapter-delete {
+.chapter-menu-button {
   min-height: 26px;
-  padding: 0 var(--space-2);
-  font-size: 12px;
-  opacity: 0.75;
+  min-width: 30px;
+  padding: 0 var(--space-1);
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.7;
 }
 
-.chapter-rename-button {
-  min-height: 26px;
-  padding: 0 var(--space-2);
-  font-size: 12px;
-  opacity: 0.75;
-}
-
-.chapter-row:hover .chapter-delete,
-.chapter-row-selected .chapter-delete,
-.chapter-row:hover .chapter-rename-button,
-.chapter-row-selected .chapter-rename-button {
+.chapter-row:hover .chapter-menu-button,
+.chapter-row-selected .chapter-menu-button,
+.chapter-menu-button[aria-expanded="true"] {
   opacity: 1;
+}
+
+.chapter-menu {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 128px;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 4px);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.chapter-menu-item {
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chapter-menu-item:hover:not(:disabled) {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.chapter-menu-item:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.chapter-menu-item:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.chapter-menu-danger {
+  color: var(--danger);
+}
+
+.chapter-menu-danger:hover:not(:disabled) {
+  background: var(--warning-soft);
+  color: var(--danger);
 }
 
 .chapter-rename {
@@ -773,6 +833,104 @@ select {
   color: var(--muted);
   font-size: 13px;
   text-align: center;
+}
+
+/* 章节校验提醒 */
+.chapter-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.warnings-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.warnings-title {
+  color: var(--warning);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.warnings-count {
+  color: var(--warning);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.warnings-hint {
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.9;
+}
+
+.warnings-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.warning-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: calc(var(--radius) - 4px);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+button.warning-item {
+  cursor: pointer;
+}
+
+button.warning-item:hover {
+  background: var(--surface);
+}
+
+.warning-kind {
+  flex: none;
+  padding: 0 var(--space-1);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--warning);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.warning-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.warning-suspected {
+  flex-wrap: wrap;
+}
+
+.warning-split {
+  margin-left: auto;
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  font-size: 12px;
+}
+
+.warnings-more {
+  align-self: flex-start;
+  font-size: 12px;
 }
 
 /* 书籍信息面板 */
@@ -2144,8 +2302,8 @@ details[open] > summary .disclosure-caret {
   .volume-name,
   .volume-delete,
   .chapter-title,
-  .chapter-delete,
-  .chapter-rename-button,
+  .chapter-menu-button,
+  .chapter-menu-item,
   .preview-step,
   .preview-mode,
   .toast-action,
@@ -2434,6 +2592,97 @@ details[open] > summary .disclosure-caret {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+/* 手动分章弹窗 */
+.split-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.split-hint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.split-warning {
+  color: var(--warning);
+}
+
+.split-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 46vh;
+  margin: 0;
+  padding: var(--space-2);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 4px);
+  background: var(--bg);
+  list-style: none;
+}
+
+.split-line {
+  display: grid;
+  grid-template-columns: 3.5em minmax(0, 1fr);
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.split-line:hover {
+  background: var(--surface);
+}
+
+.split-line-selected {
+  background: var(--primary-soft);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+.split-line:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.split-line-no {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.split-line-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.split-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.split-more {
+  align-self: flex-start;
+  font-size: 12px;
+}
+
+.split-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
 }
 
 /* 设置弹窗与书库弹窗的内容容器 */

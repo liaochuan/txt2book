@@ -88,14 +88,14 @@ const FONT_STACKS: Record<FontChoice, string> = {
 /**
  * 元素选择器与顺序：顺序固定，保证预览与 EPUB 的 CSS 文本可直接比对。
  * - 章标题与主题选择器保持同特异度，依赖拼接顺序覆盖；
- * - intro 排除 `.book-author`，否则书名页作者行会被误改字号与对齐。
+ * - intro 只针对简介页正文，书名页已不再生成。
  */
 const ELEMENT_SELECTORS: Array<[ElementKey, string]> = [
   ["chapterTitle", ".txt2book h1.chapter-title"],
   ["body", ".txt2book p"],
   ["volumeTitle", ".txt2book .volume-title"],
   ["volumeNote", ".txt2book .volume-note"],
-  ["intro", ".txt2book .title-page p:not(.book-author), .txt2book .description-page p"],
+  ["intro", ".txt2book .description-page p"],
   ["tocTitle", ".txt2book .toc-page .toc-title"],
   ["tocItem", ".txt2book .toc-page li"],
 ];

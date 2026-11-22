@@ -89,16 +89,74 @@ describe("calibreService pushEpub", () => {
     const upload = fake.uploads[0];
     expect(upload.fields.book_id).toBe("1");
     expect(upload.fields.csrf_token).toBe("fake-admin-csrf-token");
+    // /upload 不读取这些字段，元数据必须在上传后单独回写。
+    expect(upload.fields.comments).toBeUndefined();
+    expect(upload.fields["identifier-type-isbn"]).toBeUndefined();
     expect(upload.fileField).toBe("btn-upload-format");
     expect(upload.fileName).toBe("三体黑暗森林.epub");
     expect(upload.fileContentType).toBe("application/epub+zip");
     expect(upload.data?.equals(EPUB_DATA)).toBe(true);
     expect(upload.csrfHeader).toBe("fake-admin-csrf-token");
 
+    expect(fake.metadataRestores).toHaveLength(1);
+    expect(fake.metadataRestores[0]?.bookId).toBe(1);
+    expect(fake.metadataRestores[0]?.fields).toMatchObject({
+      csrf_token: "fake-admin-csrf-token",
+      title: "三体",
+      authors: "刘慈欣 & 另一位",
+      rating: "4",
+      tags: "科幻, 小说",
+      series: "地球往事",
+      series_index: "1",
+      publisher: "重庆出版社",
+      languages: "中文",
+      comments: "第一段 & 第二段",
+      "identifier-type-isbn": "isbn",
+      "identifier-val-isbn": "978-7-111",
+    });
+    const uploadIndex = fake.requests.findIndex((item) => item.path === "/upload");
+    const restoreIndex = fake.requests.findIndex(
+      (item) => item.method === "POST" && item.path === "/admin/book/1",
+    );
+    expect(uploadIndex).toBeGreaterThanOrEqual(0);
+    expect(restoreIndex).toBeGreaterThan(uploadIndex);
+
     // 预检一次 + 上传后确认一次。
     expect(fake.requests.filter((item) => item.path === EPUB_PATH)).toHaveLength(2);
     expect(fake.requests.some((item) => item.path === "/admin/book/1")).toBe(true);
     expect(fake.requests.some((item) => item.path === "/upload")).toBe(true);
+  });
+
+  it("fails closed before upload when the edit page is unavailable", async () => {
+    const fake = await startFake({ adminBookStatus: 403 });
+    const service = await connectedService(fake);
+
+    const error = await service
+      .pushEpub(1, EPUB_DATA, "三体", false)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "CALIBRE_PUSH_METADATA_UNAVAILABLE",
+      statusCode: 403,
+    });
+    expect(fake.uploads).toHaveLength(0);
+    expect(fake.requests.some((item) => item.path === "/upload")).toBe(false);
+  });
+
+  it("reports metadata restore failure after the EPUB was added", async () => {
+    const fake = await startFake({ metadataRestoreStatus: 500 });
+    const service = await connectedService(fake);
+
+    const error = await service
+      .pushEpub(1, EPUB_DATA, "三体", false)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "CALIBRE_PUSH_METADATA_FAILED",
+      statusCode: 502,
+    });
+    expect(fake.uploads).toHaveLength(1);
+    expect(fake.metadataRestores).toHaveLength(1);
   });
 
   it("rejects an existing EPUB with CALIBRE_EPUB_EXISTS (409) before any upload", async () => {

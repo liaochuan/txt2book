@@ -1,6 +1,7 @@
 import { computed, ref, type ComputedRef, type Ref } from "vue";
 import { ApiError, api } from "../core/api";
 import { mapCalibreLanguage, parseOpdsFeed } from "../core/calibre/feed";
+import { indentParagraphs } from "../core/preprocess";
 import type { BookMeta, BookSource, CoverAsset } from "../types/book";
 import type { CalibreBook, CalibreFeed, CalibreSessionInfo } from "../types/calibre";
 import type { BookSession } from "./useBookSession";
@@ -463,7 +464,7 @@ export function useCalibre(deps: {
         title,
         author: book.authors.join("、"),
         language: mapCalibreLanguage(book.language),
-        description: book.summary || undefined,
+        description: book.summary ? indentParagraphs(book.summary) : undefined,
       };
       const source: BookSource = {
         kind: "calibre-web",

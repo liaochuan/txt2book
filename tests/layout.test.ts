@@ -14,8 +14,7 @@ import {
 const THEME_IDS: ThemeId[] = ["minimal", "paper", "night", "classic", "eink"];
 
 const CHAPTER_TITLE_SELECTOR = ".txt2book h1.chapter-title";
-const INTRO_SELECTOR =
-  ".txt2book .title-page p:not(.book-author), .txt2book .description-page p";
+const INTRO_SELECTOR = ".txt2book .description-page p";
 
 const ELEMENT_KEYS: ElementKey[] = [
   "chapterTitle",
@@ -331,10 +330,10 @@ describe("layoutCss", () => {
     expect(css).not.toContain("@font-face");
   });
 
-  it("keeps the author line out of the intro selector", () => {
+  it("targets only the description page with intro styles", () => {
     const css = layoutCss("paper", defaultLayoutFor("paper"));
-    expect(css).toContain(".txt2book .title-page p:not(.book-author)");
-    expect(css).not.toContain(".txt2book .title-page p {");
+    expect(css).toContain(INTRO_SELECTOR);
+    expect(css).not.toContain(".title-page");
   });
 
   it("matches the theme baseline for key default values", () => {

@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import BookMetaPanel from "./components/BookMetaPanel.vue";
 import BackgroundPanel from "./components/BackgroundPanel.vue";
 import CalibreLibraryDialog from "./components/CalibreLibraryDialog.vue";
 import CalibreSettingsDialog from "./components/CalibreSettingsDialog.vue";
 import ChapterTree from "./components/ChapterTree.vue";
+import ChapterWarnings from "./components/ChapterWarnings.vue";
 import CoverPanel from "./components/CoverPanel.vue";
 import CustomRulesPanel from "./components/CustomRulesPanel.vue";
 import ExportPanel from "./components/ExportPanel.vue";
 import LoginView from "./components/LoginView.vue";
 import PreviewPane from "./components/PreviewPane.vue";
+import SplitChapterDialog from "./components/SplitChapterDialog.vue";
 import ThemePicker from "./components/ThemePicker.vue";
 import ToastStack from "./components/ToastStack.vue";
 import TypographyPanel from "./components/TypographyPanel.vue";
@@ -50,6 +52,7 @@ const {
   select,
   selectVolume,
   rename,
+  splitChapter,
   removeChapter,
   removeVolume,
   undo,
@@ -74,6 +77,15 @@ const calibreTitle = computed<string>(() => calibre.linkedBook.value?.title ?? "
 /** 同一时刻只打开一个 calibre-web 弹窗。 */
 const libraryOpen = ref(false);
 const settingsOpen = ref(false);
+/** 章节目录句柄：校验提醒点击后主动滚动定位（同一章再次点击也能生效）。 */
+const chapterTree = ref<{ locate: (id: string) => void } | null>(null);
+/** 分章弹窗的目标章节与预设切分点；为 null 时关闭。 */
+const splitTarget = ref<{ chapterId: string; lineIndex?: number } | null>(null);
+const splitChapterData = computed(() => {
+  const target = splitTarget.value;
+  if (!target) return null;
+  return book.value.chapters.find((chapter) => chapter.id === target.chapterId) ?? null;
+});
 
 watch(
   [calibre.linkedBook, calibre.canPush, hasEpub],
@@ -249,6 +261,53 @@ function onRename(payload: { id: string; title: string }): void {
   rename(payload.id, payload.title);
 }
 
+/** 目录行只传章节 id；提醒卡片还会带预设切分点。 */
+function openSplit(payload: string | { chapterId: string; lineIndex?: number }): void {
+  splitTarget.value =
+    typeof payload === "string" ? { chapterId: payload } : { ...payload };
+}
+
+function closeSplit(): void {
+  splitTarget.value = null;
+}
+
+function onSplit(payload: {
+  chapterId: string;
+  lineIndex: number;
+  title: string;
+  dropLine: boolean;
+}): void {
+  const targetIndex = book.value.chapters.findIndex(
+    (chapter) => chapter.id === payload.chapterId,
+  );
+  const created = splitChapter(payload.chapterId, payload.lineIndex, {
+    title: payload.title,
+    dropLine: payload.dropLine,
+  });
+  if (!created) {
+    pushToast({ message: "无法在该位置分章，请选择有效的切分点。", kind: "error" });
+    return;
+  }
+
+  splitTarget.value = null;
+  const createdTitle =
+    (targetIndex >= 0 ? book.value.chapters[targetIndex + 1]?.title : undefined) ??
+    payload.title;
+  const actionVersion = version.value;
+  pushToast({
+    message: `已拆分出新章节「${createdTitle}」。`,
+    kind: "success",
+    actionLabel: "撤销",
+    action: () => undoIfCurrent(actionVersion),
+  });
+}
+
+/** 校验提醒点击：先选中，再主动定位；同一章节重复点击也能滚动。 */
+function onLocateChapter(id: string): void {
+  select(id);
+  void nextTick().then(() => chapterTree.value?.locate(id));
+}
+
 /** 再次点击已选中的卷名时退出卷预览，回到章节（选中为空时回退到第一章）。 */
 function onSelectVolume(id: string): void {
   if (selectedVolumeId.value === id) {
@@ -346,6 +405,15 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
       request.format === "epub" ? pushMode.value : "off";
     const shouldDownload = mode !== "push-only";
     const shouldPush = mode !== "off" && calibreCanPush.value;
+
+    // 仅推送时不会下载本地文件，把转换器最后阶段的“准备下载”改成实际动作。
+    if (mode === "push-only" && shouldPush) {
+      exportProgress.value = {
+        phase: "writing",
+        percent: 100,
+        message: "正在推送到 Calibre-Web…",
+      };
+    }
 
     // 仅推送时不生成本地文件；转换结果只用于上传。
     if (shouldDownload) downloadBlob(blob, filename);
@@ -453,7 +521,13 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
 
       <div v-else class="workspace" data-test="workspace">
         <div class="workspace-col workspace-col-side" data-test="workspace-side">
+          <ChapterWarnings
+            :chapters="book.chapters"
+            @select-chapter="onLocateChapter"
+            @split-chapter="openSplit"
+          />
           <ChapterTree
+            ref="chapterTree"
             :volumes="book.volumes"
             :chapters="book.chapters"
             :selected-id="selectedId"
@@ -462,6 +536,7 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
             @select="select"
             @select-volume="onSelectVolume"
             @rename="onRename"
+            @split-chapter="openSplit"
             @remove-chapter="onRemoveChapter"
             @remove-volume="onRemoveVolume"
             @undo="undo"
@@ -487,7 +562,7 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
           <BookMetaPanel :meta="book.meta" @update:meta="updateMeta" />
           <CoverPanel :session="session" :controller="coverController" />
           <ThemePicker :model-value="themeId" @update:model-value="setTheme" />
-          <details class="card layout-card" data-test="layout-card" open>
+          <details class="card layout-card" data-test="layout-card">
             <summary class="layout-card-header">
               <span class="disclosure-caret" aria-hidden="true"></span>
               <span class="layout-card-heading">
@@ -552,6 +627,14 @@ async function onExport(request: { format: string; options: ConvertOptions }): P
       @close="libraryOpen = false"
       @open-settings="openSettings"
       @imported="onImported"
+    />
+
+    <SplitChapterDialog
+      :open="splitTarget !== null"
+      :chapter="splitChapterData"
+      :initial-line-index="splitTarget?.lineIndex"
+      @close="closeSplit"
+      @split="onSplit"
     />
 
     <ToastStack :toasts="toasts" @dismiss="dismissToast" @action="runToastAction" />

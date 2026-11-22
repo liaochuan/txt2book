@@ -35,6 +35,36 @@ const EDGE_DOTS_AND_SPACES = /^[.\s]+|[.\s]+$/g;
 /** `<input>` / `<meta>` 标签；允许引号内出现 `>`。 */
 const INPUT_TAG_PATTERN = /<input\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
 const META_TAG_PATTERN = /<meta\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+const TEXTAREA_PATTERN = /<textarea\b(?:[^>"']|"[^"]*"|'[^']*')*>([\s\S]*?)<\/textarea>/gi;
+const HTML_ENTITY_PATTERN = /&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi;
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: "\u00a0",
+};
+
+/** 解码 calibre-web 表单里的常见 HTML 实体；未知实体保持原样。 */
+function decodeHtmlEntities(value: string): string {
+  return value.replace(HTML_ENTITY_PATTERN, (match, entity: string) => {
+    const key = entity.toLowerCase();
+    if (key.startsWith("#x")) {
+      const code = Number.parseInt(key.slice(2), 16);
+      return Number.isInteger(code) && code >= 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : match;
+    }
+    if (key.startsWith("#")) {
+      const code = Number.parseInt(key.slice(1), 10);
+      return Number.isInteger(code) && code >= 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : match;
+    }
+    return NAMED_ENTITIES[key] ?? match;
+  });
+}
 
 /** 独立解析标签属性：`name="v"`、`name='v'`、`name=v`（大小写不敏感）。 */
 const ATTRIBUTE_PATTERN = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g;
@@ -72,6 +102,79 @@ export function extractCsrfToken(html: string): string | null {
   }
 
   return null;
+}
+
+/**
+ * 提取编辑页里需要在上传后原样回传的元数据字段。
+ *
+ * calibre-web 的 `/upload` 会走 `do_edit_book`：缺少 `comments` 时简介会变成
+ * 字面量 “None”，缺少 identifier 字段时所有书号会被删除；缺少 authors 会直接
+ * 抛 KeyError，缺少 rating 会清空评分。这里读取编辑表单的现有值，上传成功后
+ * 再 POST 回 `/admin/book/<id>` 恢复。
+ */
+export function extractUploadMetadata(html: string): {
+  found: boolean;
+  fields: Record<string, string>;
+} {
+  const fields: Record<string, string> = {};
+  // 编辑页的内联脚本也会拼接 identifier 输入框，必须先剔除，避免伪造空书号。
+  const cleaned = html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "");
+
+  for (const match of cleaned.matchAll(TEXTAREA_PATTERN)) {
+    const tag = match[0].slice(0, match[0].indexOf(">") + 1);
+    if (readAttribute(tag, "name")?.trim().toLowerCase() !== "comments") continue;
+    fields.comments = decodeHtmlEntities(match[1] ?? "");
+    break;
+  }
+
+  const identifiers = new Map<string, { type?: string; value?: string }>();
+  for (const match of cleaned.matchAll(INPUT_TAG_PATTERN)) {
+    const tag = match[0];
+    const name = readAttribute(tag, "name")?.trim() ?? "";
+    if (name === "" || readAttribute(tag, "value") === null) continue;
+    const value = decodeHtmlEntities(readAttribute(tag, "value") ?? "");
+
+    if (name === "authors") {
+      fields.authors = value;
+      continue;
+    }
+    if (name === "title") {
+      // do_edit_book 在无 upload_formats 分支会读取 title_change，缺 title 会报错。
+      fields.title = value;
+      continue;
+    }
+    if (
+      ["tags", "series", "series_index", "publisher", "languages", "rating"].includes(name) &&
+      value.trim() !== ""
+    ) {
+      fields[name] = value;
+      continue;
+    }
+
+    const identifier = /^identifier-(type|val)-([A-Za-z0-9_.-]+)$/i.exec(name);
+    if (!identifier) continue;
+    const [, kind, suffix] = identifier;
+    if (!suffix) continue;
+    const entry = identifiers.get(suffix) ?? {};
+    if (kind?.toLowerCase() === "type") entry.type = value;
+    else entry.value = value;
+    identifiers.set(suffix, entry);
+  }
+
+  for (const [suffix, entry] of identifiers) {
+    const type = entry.type?.trim() ?? "";
+    const value = entry.value?.trim() ?? "";
+    if (type === "" || value === "") continue;
+    fields[`identifier-type-${suffix}`] = type;
+    fields[`identifier-val-${suffix}`] = entry.value ?? "";
+  }
+
+  return {
+    found: fields.comments !== undefined || fields.authors !== undefined,
+    fields,
+  };
 }
 
 /**

@@ -37,7 +37,7 @@ const evilBook: BookModel = {
 const options = {
   themeId: "paper" as const,
   includeTocPage: true,
-  includeTitlePage: true,
+  includeDescription: true,
   includeVolumePages: true,
 };
 
@@ -55,6 +55,7 @@ describe("buildHtml", () => {
     expect(text).toContain('<header class="txt2book cover-page">');
     expect(text).toContain('<html lang="zh-CN">');
     expect(text).toContain("<title>测试书</title>");
+    expect(text).toContain('class="description-page"');
     expect(text).not.toMatch(/src="https?:/);
     expect(text).not.toMatch(/href="https?:/);
   });
@@ -63,7 +64,7 @@ describe("buildHtml", () => {
     const text = await (
       await buildHtml(evilBook, {
         includeTocPage: false,
-        includeTitlePage: false,
+        includeDescription: false,
         includeVolumePages: false,
       })
     ).text();
@@ -73,8 +74,20 @@ describe("buildHtml", () => {
     expect(text.match(/<script/gi) ?? []).toHaveLength(1);
     expect(text).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(text).not.toContain('class="title-page"');
+    expect(text).not.toContain('class="description-page"');
     expect(text).not.toContain('class="toc-page"');
     expect(text).not.toContain('class="volume-page"');
+
+    const withDescription = await (
+      await buildHtml(evilBook, {
+        includeTocPage: false,
+        includeDescription: true,
+        includeVolumePages: false,
+      })
+    ).text();
+    expect(withDescription).toContain('class="description-page"');
+    expect(withDescription).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(withDescription.match(/<script/gi) ?? []).toHaveLength(1);
   });
 
   it("renders volume pages with their lines and anchors", async () => {

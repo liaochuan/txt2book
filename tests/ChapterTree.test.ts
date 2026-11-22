@@ -1,6 +1,5 @@
 import { mount } from "@vue/test-utils";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ChapterTree from "../src/components/ChapterTree.vue";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";import ChapterTree from "../src/components/ChapterTree.vue";
 import type { Chapter, Volume } from "../src/types/book";
 
 function chapter(
@@ -43,9 +42,16 @@ function mountTree(
 }
 
 const store = new Map<string, string>();
+const scrollIntoView = vi.fn();
 
 beforeEach(() => {
   store.clear();
+  scrollIntoView.mockClear();
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    value: scrollIntoView,
+    configurable: true,
+    writable: true,
+  });
   vi.stubGlobal("localStorage", {
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, value: string) => {
@@ -62,6 +68,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  delete (Element.prototype as Partial<Element>).scrollIntoView;
 });
 
 /** happy-dom 的 KeyboardEvent 构造参数对 isComposing 支持不稳，这里显式覆盖。 */
@@ -169,7 +176,9 @@ describe("ChapterTree", () => {
 
   it("emits remove-chapter from the row delete button", async () => {
     const wrapper = mountTree();
-    const button = wrapper.findAll('[data-test="delete-chapter"]')[0];
+    const row = wrapper.findAll('[data-test="chapter-row"]')[0];
+    await row.get('[data-test="chapter-menu"]').trigger("click");
+    const button = row.get('[data-test="delete-chapter"]');
 
     expect(button.attributes("aria-label")).toContain("第一章 起始");
     await button.trigger("click");
@@ -179,16 +188,20 @@ describe("ChapterTree", () => {
 
   it("disables chapter deletion when only one chapter remains", async () => {
     const wrapper = mountTree({ chapters: [c1], volumes: [] });
-    const button = wrapper.get('[data-test="delete-chapter"]');
+    const row = wrapper.get('[data-test="chapter-row"]');
+    await row.get('[data-test="chapter-menu"]').trigger("click");
+    const button = row.get('[data-test="delete-chapter"]');
 
     expect(button.attributes("disabled")).toBeDefined();
     expect(button.attributes("title")).toBe("全书至少保留一章");
   });
 
-  it("keeps chapter deletion enabled when more than one chapter exists", () => {
+  it("keeps chapter deletion enabled when more than one chapter exists", async () => {
     const wrapper = mountTree({ chapters: [c1, c2] });
+    const row = wrapper.findAll('[data-test="chapter-row"]')[0];
+    await row.get('[data-test="chapter-menu"]').trigger("click");
 
-    expect(wrapper.findAll('[data-test="delete-chapter"]')[0]?.attributes("disabled")).toBeUndefined();
+    expect(row.get('[data-test="delete-chapter"]').attributes("disabled")).toBeUndefined();
   });
 
   it("emits remove-volume from the volume header", async () => {
@@ -473,9 +486,10 @@ describe("ChapterTree", () => {
     expect(row.find('[data-test="rename-input"]').exists()).toBe(true);
   });
 
-  it("exposes a visible rename button", async () => {
+  it("opens the rename editor from the menu", async () => {
     const wrapper = mountTree();
     const row = wrapper.findAll('[data-test="chapter-row"]')[0];
+    await row.get('[data-test="chapter-menu"]').trigger("click");
     const button = row.get('[data-test="rename-chapter"]');
 
     expect(button.text()).toContain("重命名");
@@ -493,6 +507,7 @@ describe("ChapterTree", () => {
     await row.get(".chapter-title").trigger("dblclick");
     await row.get('[data-test="rename-input"]').setValue("未保存的标题");
 
+    await row.get('[data-test="chapter-menu"]').trigger("click");
     const remove = row.get('[data-test="delete-chapter"]');
     await remove.trigger("mousedown");
     await remove.trigger("click");
@@ -534,5 +549,130 @@ describe("ChapterTree", () => {
 
     expect(wrapper.findAll('[data-test="chapter-row"]')).toHaveLength(0);
     expect(wrapper.get('[data-test="empty-tree"]').text()).toContain("还没有章节");
+  });
+
+  it("emits split-chapter from the row button", async () => {
+    const wrapper = mountTree();
+    const row = wrapper.findAll('[data-test="chapter-row"]')[0];
+    await row.get('[data-test="chapter-menu"]').trigger("click");
+    await row.get('[data-test="split-chapter"]').trigger("click");
+    expect(wrapper.emitted("split-chapter")?.[0]).toEqual(["c1"]);
+  });
+
+  it("disables split for chapters with fewer than two lines", async () => {
+    const wrapper = mountTree({
+      volumes: [],
+      chapters: [chapter("only", "只有一行", null, ["正文"])],
+    });
+    const row = wrapper.get('[data-test="chapter-row"]');
+    await row.get('[data-test="chapter-menu"]').trigger("click");
+    expect(row.get('[data-test="split-chapter"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("hides row actions until the menu is opened", async () => {
+    const wrapper = mountTree();
+    const row = wrapper.findAll('[data-test="chapter-row"]')[0];
+    const menuButton = row.get('[data-test="chapter-menu"]');
+
+    expect(row.find('[data-test="rename-chapter"]').exists()).toBe(false);
+    expect(row.find('[data-test="split-chapter"]').exists()).toBe(false);
+    expect(row.find('[data-test="delete-chapter"]').exists()).toBe(false);
+    expect(menuButton.attributes("aria-expanded")).toBe("false");
+
+    await menuButton.trigger("click");
+
+    expect(menuButton.attributes("aria-expanded")).toBe("true");
+    expect(menuButton.attributes("aria-controls")).toBe(
+      row.get('[data-test="chapter-menu-panel"]').attributes("id"),
+    );
+    expect(row.find('[data-test="chapter-menu-panel"]').exists()).toBe(true);
+    expect(row.findAll(".chapter-menu-item")).toHaveLength(3);
+    expect(row.get('[data-test="chapter-menu-panel"]').attributes("style")).toContain("right:");
+  });
+
+  it("closes the menu when clicking outside the row", async () => {
+    const wrapper = mountTree();
+    const row = wrapper.findAll('[data-test="chapter-row"]')[0];
+    await row.get('[data-test="chapter-menu"]').trigger("click");
+    expect(row.find('[data-test="chapter-menu-panel"]').exists()).toBe(true);
+
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    await wrapper.vm.$nextTick();
+
+    expect(row.find('[data-test="chapter-menu-panel"]').exists()).toBe(false);
+  });
+
+  it("returns focus to the menu trigger after Escape", async () => {
+    const wrapper = mountTree();
+    const row = wrapper.findAll('[data-test="chapter-row"]')[0];
+    const menuButton = row.get('[data-test="chapter-menu"]');
+    await menuButton.trigger("click");
+    const focus = vi.spyOn(menuButton.element as HTMLButtonElement, "focus");
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await wrapper.vm.$nextTick();
+
+    expect(row.find('[data-test="chapter-menu-panel"]').exists()).toBe(false);
+    expect(focus).toHaveBeenCalled();
+  });
+
+  it("closes the menu after choosing an action", async () => {
+    const wrapper = mountTree();
+    const row = wrapper.findAll('[data-test="chapter-row"]')[0];
+    await row.get('[data-test="chapter-menu"]').trigger("click");
+
+    await row.get('[data-test="rename-chapter"]').trigger("click");
+
+    expect(row.find('[data-test="chapter-menu-panel"]').exists()).toBe(false);
+    expect(row.find('[data-test="rename-input"]').exists()).toBe(true);
+  });
+
+  it("keeps only one chapter menu open at a time", async () => {
+    const wrapper = mountTree();
+    const rows = wrapper.findAll('[data-test="chapter-row"]');
+
+    await rows[0].get('[data-test="chapter-menu"]').trigger("click");
+    await rows[1].get('[data-test="chapter-menu"]').trigger("click");
+
+    expect(rows[0].find('[data-test="chapter-menu-panel"]').exists()).toBe(false);
+    expect(rows[1].find('[data-test="chapter-menu-panel"]').exists()).toBe(true);
+  });
+
+  it("scrolls the selected chapter into view and highlights it", async () => {
+    const chapters = Array.from({ length: 40 }, (_value, index) =>
+      chapter(`c${index}`, `第${index + 1}章`, null, ["正文"]),
+    );
+    const wrapper = mountTree({ chapters, volumes: [] });
+
+    await wrapper.setProps({ selectedId: "c30" });
+
+    await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+    expect(wrapper.get('[data-chapter-id="c30"]').classes()).toContain("chapter-row-located");
+  });
+
+  it("expands a collapsed volume before locating its chapter", async () => {
+    store.set("txt2book.collapsed", JSON.stringify(["v1"]));
+    const wrapper = mountTree({ selectedId: null });
+    expect(wrapper.find('[data-chapter-id="c2"]').exists()).toBe(false);
+
+    await wrapper.setProps({ selectedId: "c2" });
+
+    await vi.waitFor(() => expect(wrapper.find('[data-chapter-id="c2"]').exists()).toBe(true));
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(JSON.parse(store.get("txt2book.collapsed") ?? "[]")).not.toContain("v1");
+  });
+
+  it("clears a search that hides the located chapter", async () => {
+    const wrapper = mountTree();
+    await wrapper.get('[data-test="search"]').setValue("不存在的标题");
+
+    await wrapper.setProps({ selectedId: "c2" });
+
+    await vi.waitFor(() =>
+      expect((wrapper.get('[data-test="search"]').element as HTMLInputElement).value).toBe(""),
+    );
+    expect(wrapper.find('[data-chapter-id="c2"]').exists()).toBe(true);
+    expect(scrollIntoView).toHaveBeenCalled();
   });
 });

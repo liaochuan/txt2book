@@ -126,7 +126,7 @@ export type PdfExportLayout = Omit<LayoutSettings, "background"> & {
 export interface PdfExportOptions {
   themeId: ThemeId;
   includeTocPage: boolean;
-  includeTitlePage: boolean;
+  includeDescription: boolean;
   includeVolumePages: boolean;
   formatOptions: Record<string, boolean | string>;
   pageSize: "A4" | "A5";

@@ -20,6 +20,7 @@ import {
   buildLoginBody,
   buildMultipartBody,
   extractCsrfToken,
+  extractUploadMetadata,
   sanitizeEpubFilename,
 } from "./login.js";
 import { createCalibreStore, type CalibreStore } from "./store.js";
@@ -125,6 +126,22 @@ function pushForbidden(): CalibreError {
     "CALIBRE_PUSH_FORBIDDEN",
     403,
     "该账号没有上传权限，或 calibre-web 未开启上传功能。",
+  );
+}
+/** 读不到编辑页时 fail closed，避免上传后简介/书号被清空。 */
+function pushMetadataUnavailable(): CalibreError {
+  return new CalibreError(
+    "CALIBRE_PUSH_METADATA_UNAVAILABLE",
+    403,
+    "无法读取 calibre-web 编辑页（需要编辑权限），为避免清空简介与书号，已取消推送。",
+  );
+}
+/** EPUB 已保存，但随后恢复元数据失败：不能谎报完全成功。 */
+function pushMetadataFailed(): CalibreError {
+  return new CalibreError(
+    "CALIBRE_PUSH_METADATA_FAILED",
+    502,
+    "EPUB 已添加，但简介/书号恢复失败，请到 calibre-web 检查并手动修正。",
   );
 }
 function epubExists(): CalibreError {
@@ -518,12 +535,22 @@ export function createCalibreService(
     };
   }
 
-  /** 从 HTML 页面提取 CSRF token；任何失败都返回空字符串。 */
-  async function readCsrfToken(
+  interface CsrfForm {
+    token: string;
+    /** 编辑页是否成功读取；false 时无法保证元数据不被清空。 */
+    hasEditForm: boolean;
+    /** 上传后需要回写到 /admin/book/<id> 的元数据字段。 */
+    fields: Record<string, string>;
+  }
+
+  const EMPTY_FORM: CsrfForm = { token: "", hasEditForm: false, fields: {} };
+
+  /** 从 HTML 页面提取 CSRF token 与需要保留的元数据字段；失败返回空。 */
+  async function readCsrfForm(
     target: CalibreTarget,
     connection: CalibreConnection,
     path: string,
-  ): Promise<string> {
+  ): Promise<CsrfForm> {
     try {
       const response = await calibreRequest(target, path, {
         headers: readHeaders(connection, "text/html,application/xhtml+xml"),
@@ -532,28 +559,69 @@ export function createCalibreService(
         cookies: connection.cookies,
         collectCookies: connection.cookies,
       });
-      if (response.status !== 200) return "";
-      return extractCsrfToken(response.body.toString("utf8")) ?? "";
+      if (response.status !== 200) return EMPTY_FORM;
+      const html = response.body.toString("utf8");
+      const metadata = extractUploadMetadata(html);
+      return {
+        token: extractCsrfToken(html) ?? "",
+        hasEditForm: metadata.found,
+        fields: metadata.fields,
+      };
     } catch {
-      return "";
+      return EMPTY_FORM;
     }
   }
 
-  /** 编辑页 → 首页 → 登录页依次取 token；全部失败时使用调用方提供的兜底值。 */
-  async function resolveCsrfToken(
+  /** 编辑页 → 首页 → 登录页依次取 token；元数据只信任编辑页。 */
+  async function resolveCsrfForm(
     target: CalibreTarget,
     connection: CalibreConnection,
     bookId: number,
     fallback: string,
-  ): Promise<string> {
-    const admin = await readCsrfToken(target, connection, `/admin/book/${bookId}`);
-    if (admin !== "") return admin;
+  ): Promise<CsrfForm> {
+    const admin = await readCsrfForm(target, connection, `/admin/book/${bookId}`);
+    if (admin.token !== "") return admin;
 
-    const root = await readCsrfToken(target, connection, "/");
-    if (root !== "") return root;
+    const root = await readCsrfForm(target, connection, "/");
+    if (root.token !== "") return { ...root, hasEditForm: false, fields: {} };
 
-    const login = await readCsrfToken(target, connection, "/login");
-    return login !== "" ? login : fallback;
+    const login = await readCsrfForm(target, connection, "/login");
+    return login.token !== ""
+      ? { ...login, hasEditForm: false, fields: {} }
+      : { token: fallback, hasEditForm: false, fields: {} };
+  }
+
+  /**
+   * 上传后回写元数据。calibre-web 的 `/upload` 会重写 comments/identifiers，
+   * 且忽略上传请求里的同名普通字段，所以必须在格式保存后单独 POST 编辑表单。
+   */
+  async function restoreMetadata(
+    target: CalibreTarget,
+    connection: CalibreConnection,
+    bookId: number,
+    form: CsrfForm,
+  ): Promise<void> {
+    const body = new URLSearchParams({
+      csrf_token: form.token,
+      ...form.fields,
+      detail_view: "1",
+    }).toString();
+
+    const response = await calibreRequest(target, `/admin/book/${bookId}`, {
+      method: "POST",
+      headers: {
+        ...readHeaders(connection, "text/html,application/xhtml+xml"),
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: Buffer.from(body, "utf8"),
+      timeoutMs: config.calibrePushTimeoutMs,
+      maxBytes: UPLOAD_MAX_BYTES,
+      cookies: connection.cookies,
+      collectCookies: connection.cookies,
+    });
+
+    if (response.status >= 200 && response.status < 400) return;
+    throw pushMetadataFailed();
   }
 
   /** 上传响应是否表示会话失效/CSRF 校验失败，需要重新登录后重试。 */
@@ -641,7 +709,8 @@ export function createCalibreService(
         loginToken = attempt.token;
       }
 
-      let token = await resolveCsrfToken(target, connection, bookId, loginToken);
+      let csrfForm = await resolveCsrfForm(target, connection, bookId, loginToken);
+      if (!csrfForm.hasEditForm || csrfForm.token === "") throw pushMetadataUnavailable();
 
       const sendUpload = async (
         csrf: string,
@@ -649,6 +718,7 @@ export function createCalibreService(
         const boundary = `----txt2book${randomBytes(12).toString("hex")}`;
         const body = buildMultipartBody({
           boundary,
+          // /upload 只读取 book_id 与文件；元数据在成功后单独回写。
           fields: { csrf_token: csrf, book_id: String(bookId) },
           file: {
             field: "btn-upload-format",
@@ -677,7 +747,7 @@ export function createCalibreService(
 
       let response: Awaited<ReturnType<typeof calibreRequest>>;
       try {
-        response = await sendUpload(token);
+        response = await sendUpload(csrfForm.token);
         if (needsRelogin(response)) {
           const attempt = await performLogin(
             target,
@@ -687,8 +757,11 @@ export function createCalibreService(
           );
           if (!attempt.ok) throw pushForbidden();
 
-          token = await resolveCsrfToken(target, connection, bookId, attempt.token);
-          response = await sendUpload(token);
+          csrfForm = await resolveCsrfForm(target, connection, bookId, attempt.token);
+          if (!csrfForm.hasEditForm || csrfForm.token === "") {
+            throw pushMetadataUnavailable();
+          }
+          response = await sendUpload(csrfForm.token);
         }
       } catch (error) {
         if (error instanceof CalibreError && error.code === "CALIBRE_TIMEOUT") {
@@ -702,6 +775,9 @@ export function createCalibreService(
       if (response.status === 401 || response.status === 403) throw pushForbidden();
       if (response.status === 413) throw pushTooLarge();
       if (response.status < 200 || response.status >= 400) throw upstream();
+
+      // 格式已保存；立即回写上传时被 calibre-web 清空/改写的元数据。
+      await restoreMetadata(target, connection, bookId, csrfForm);
 
       // 确认时上游不可达/超时同样视为“已提交但未确认”，避免谎报失败。
       try {
