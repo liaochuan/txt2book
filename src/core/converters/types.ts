@@ -27,7 +27,7 @@ export interface FormatOption {
 /** 导出选项；未提供的字段按默认值处理（目录页 / 简介页 / 卷扉页默认关闭）。 */
 export interface ConvertOptions {
   themeId?: ThemeId;
-  /** 是否把 `nav.xhtml` 作为可见目录页排进阅读顺序；关闭时仍生成，但 `linear="no"`。 */
+  /** 是否把 `nav.xhtml` 作为可见目录页排进阅读顺序；关闭时不进 spine。 */
   includeTocPage?: boolean;
   /** 是否生成简介页；关闭时书籍元数据中的简介仍然保留。 */
   includeDescription?: boolean;

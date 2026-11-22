@@ -235,7 +235,7 @@ interface BookModel {
 - 每个非空行生成 `<p>`；诗歌/短行保持原样。
 - 仅含 `***`、`* * *`、`———`、`◇◇◇` 等的行识别为场景分隔符，渲染为 `<hr class="scene-break">`。
 - 章节标题不再重复写进正文首行（解析时已剥离）。
-- 章节页包含隐藏的 `<h1>`（用于阅读器目录定位）+ 可见标题区。
+- 章节页只包含一份可见标题；目录锚点由外层 `<section id="chapter-N">` 承担。
 - 全书增加：封面页、书名页（书名/作者）、简介页（有简介时）、目录页。
 - OPF 补全 `dc:creator`、`dc:description`、`dc:language`、`dcterms:modified`、`cover-image` 属性。
 - `nav.xhtml` 使用嵌套 `<ol>` 表达卷 → 章；番外分组同样嵌套；同时生成 `toc.ncx` 兼容旧阅读器。
@@ -330,7 +330,7 @@ interface ConvertOptions {
 }
 ```
 
-EPUB 内部结构固定：**一个章节一个 XHTML**，卷只生成卷扉页与目录分组，不把整卷合并成一个文件。这样导航锚点、主题作用域、阅读器分页都最简单。`includeTocPage = false` 时仍生成 `nav.xhtml`（EPUB 3 必需），但 spine 中标记 `linear="no"`；书名页与卷扉页同样可关闭。
+EPUB 内部结构固定：**一个章节一个 XHTML**，卷只生成卷扉页与目录分组，不把整卷合并成一个文件。这样导航锚点、主题作用域、阅读器分页都最简单。`nav.xhtml` 始终生成并在 manifest 中声明（EPUB 3 必需）；`includeTocPage = false` 时不进 spine，避免忽略 `linear="no"` 的阅读器把目录当成第一章正文。书名页与卷扉页同样可关闭。
 
 `renderChapter.ts` 的输出契约是“XHTML body 片段”，预览时直接注入 iframe，导出时包进完整 XHTML 文档，两条路径共用。
 

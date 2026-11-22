@@ -88,8 +88,9 @@ export function xhtmlDocument(
 }
 
 /**
- * 章节页：隐藏 `<h1>` 供阅读器定位目录锚点，可见标题由 `renderChapterBody` 输出，
- * 这样预览与导出的正文结构完全一致。
+ * 章节页：目录锚点由外层 `<section id="chapter-N">` 承担，可见标题由
+ * `renderChapterBody` 输出。正文里只保留这一份标题，否则不执行 CSS 的阅读器
+ * （阅读 / 多看）会把隐藏的锚点标题也当成文字，导致章首标题重复。
  */
 export function chapterDocument(
   chapter: Chapter,
@@ -98,15 +99,12 @@ export function chapterDocument(
   language: Language,
   options: ChapterDocumentOptions = {},
 ): string {
-  const parts = [
-    `<section class="chapter" id="chapter-${index}">`,
-    `<h1 class="title-anchor" aria-hidden="true">${escapeXml(chapter.title)}</h1>`,
-  ];
+  const parts = [`<section class="chapter" id="chapter-${index}">`];
 
   for (const note of options.volumeNotes ?? []) {
     const block = [
       '<section class="volume-note-block">',
-      // 章节本身已有隐藏的 `<h1>` 作为标题锚点，卷标题降为 `<h2>` 保持层级。
+      // 章节名由 `renderChapterBody` 输出为 `<h1>`，卷标题降为 `<h2>` 保持层级。
       `<h2 class="volume-title">${escapeXml(note.title)}</h2>`,
     ];
     for (const rawLine of note.lines) {

@@ -11,7 +11,7 @@ export interface OpfManifestItem {
 
 export interface OpfSpineItem {
   idref: string;
-  /** `false` 时写入 `linear="no"`（如被关闭的目录页）。 */
+  /** `false` 时写入 `linear="no"`，表示非主线内容。 */
   linear?: boolean;
 }
 

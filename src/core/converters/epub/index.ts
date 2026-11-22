@@ -139,8 +139,11 @@ export async function buildEpub(
     spine.push({ idref: "description" });
   }
 
-  // 目录页关闭时仍进入 spine，但标记为非主线（linear="no"）。
-  spine.push({ idref: "nav", linear: opts.includeTocPage ? undefined : false });
+  // 关闭目录页时不把 nav 排进 spine：EPUB 3 只要求在 manifest 中声明导航文档，
+  // 而阅读 / 多看等阅读器会忽略 linear="no"，把整页目录当成第一章正文排出来。
+  if (opts.includeTocPage) {
+    spine.push({ idref: "nav" });
+  }
 
   const volumeById = new Map(book.volumes.map((volume) => [volume.id, volume]));
   const volumeOrdinal = new Map(book.volumes.map((volume, index) => [volume.id, index + 1]));

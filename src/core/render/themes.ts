@@ -13,7 +13,7 @@ export interface Theme {
 }
 
 /**
- * 结构性页面样式：封面页、书名页、卷扉页、目录页、隐藏标题锚点。
+ * 结构性页面样式：封面页、书名页、卷扉页、目录页。
  * 所有主题共用同一套布局，只靠 `currentColor` 与继承的字体/配色跟随主题，
  * 避免为每套主题重复一遍、也避免依赖阅读器可能不支持的 CSS 变量。
  */
@@ -106,14 +106,6 @@ const STRUCTURAL_CSS = `
   border: 0;
   border-top: 1px solid currentColor;
   opacity: 0.4;
-}
-.txt2book .title-anchor {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
 }`.trim();
 
 /** 场景分隔装饰：所有主题共用同一套盒模型，只替换字符与配色。 */

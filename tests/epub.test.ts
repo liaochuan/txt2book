@@ -78,7 +78,9 @@ describe("buildEpub", () => {
     expect(zip.file("OEBPS/description.xhtml")).toBeNull();
     expect(zip.file("OEBPS/volume-1.xhtml")).toBeNull();
     const opf = await zip.file("OEBPS/content.opf")!.async("string");
-    expect(opf).toMatch(/idref="nav"[^>]*linear="no"/);
+    // 关闭目录页时不排进 spine：部分阅读器忽略 linear="no" 会把目录当正文。
+    expect(opf).not.toMatch(/<itemref idref="nav"/);
+    expect(opf).toContain('properties="nav"');
     // 关闭简介页不删除元数据里的简介。
     expect(opf).toContain("<dc:description>简介</dc:description>");
   });
@@ -198,13 +200,14 @@ describe("buildEpub structure", () => {
     );
   });
 
-  it("writes chapters in text/ with the shared theme link and hidden title", async () => {
+  it("writes chapters in text/ with the shared theme link and one visible title", async () => {
     const { zip, text } = await build();
     expect(zip.file("OEBPS/text/chapter-1.xhtml")).toBeTruthy();
     const chapter = await text("OEBPS/text/chapter-1.xhtml");
     expect(chapter).toContain('<html xmlns="http://www.w3.org/1999/xhtml"');
     expect(chapter).toContain('<link rel="stylesheet" href="../styles/theme.css"/>');
-    expect(chapter).toContain('<h1 class="title-anchor" aria-hidden="true">第一章</h1>');
+    expect(chapter).not.toContain("title-anchor");
+    expect(chapter.match(/<h1[\s>]/g) ?? []).toHaveLength(1);
     expect(chapter).toContain('<h1 class="chapter-title">第一章</h1>');
     expect(chapter).toContain("<p>正文一</p>");
     expect(chapter).toContain('<body class="txt2book">');
@@ -296,7 +299,7 @@ describe("buildEpub structure", () => {
     expect(zip.file("OEBPS/description.xhtml")).toBeNull();
     expect(zip.file("OEBPS/volume-1.xhtml")).toBeNull();
     const opf = await text("OEBPS/content.opf");
-    expect(opf).toMatch(/idref="nav"[^>]*linear="no"/);
+    expect(opf).not.toMatch(/<itemref idref="nav"/);
 
     // 默认关闭卷扉页时，卷标题与卷首文字以区块形式并入该卷第一章。
     const chapter = await text("OEBPS/text/chapter-1.xhtml");
@@ -548,7 +551,6 @@ describe("theme coverage", () => {
         ".description-page",
         ".description-title",
         ".toc-page",
-        ".title-anchor",
       ]) {
         expect(theme.css).toContain(selector);
       }
