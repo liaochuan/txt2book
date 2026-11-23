@@ -15,7 +15,7 @@
 
 ## 全局约束
 
-- 不执行 `git commit`；所有改动在 worktree `E:\Code\txt-epub\txt2book\.worktree\task-20261118-formats` 内。
+- 不执行 `git commit`；所有改动在 worktree `.worktree/task-20261118-formats` 内。
 - 用户可见文案中文，代码标识符英文。
 - 新增依赖：服务端 `pdfkit`（MIT）；不引入 headless 浏览器。
 - 预览与导出共用主题/排版 CSS 生成函数。

@@ -6,7 +6,7 @@
 
 ## Global Constraints
 
-- 在 worktree `E:\Code\txt-epub\txt2book\.worktree\task-20261118-formats` 内工作；不提交。
+- 在 worktree `.worktree/task-20261118-formats` 内工作；不提交。
 - 新增依赖仅 `pdfkit`（运行时）与 `@types/pdfkit`（开发）。
 - 中文文案、英文标识符；错误不泄露字体路径。
 - 现有测试保持通过。

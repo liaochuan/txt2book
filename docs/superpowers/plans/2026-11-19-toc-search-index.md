@@ -13,7 +13,7 @@
 
 ## 全局约束
 
-- 在 worktree `E:\Code\txt-epub\txt2book\.worktree\task-20261119-toc-search` 内工作；不提交。
+- 在 worktree `.worktree/task-20261119-toc-search` 内工作；不提交。
 - 不新增依赖。
 - HTML 仍为单文件、无外部网络请求；脚本只能操作自身 DOM，不得使用 `innerHTML` 插入书内容。
 - PDF 不改变现有分页、目录页码、书签与字体逻辑。

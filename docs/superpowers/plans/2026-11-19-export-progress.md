@@ -6,7 +6,7 @@
 
 ## Global Constraints
 
-- 在 worktree `E:\Code\txt-epub\txt2book\.worktree\task-20261119-progress` 内工作；不提交。
+- 在 worktree `.worktree/task-20261119-progress` 内工作；不提交。
 - 不新增依赖；不修改服务端协议。
 - 不人为延迟 HTML/TXT 导出。
 - 无内联样式；中文 UI 文案。

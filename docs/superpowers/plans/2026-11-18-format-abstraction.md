@@ -6,7 +6,7 @@
 
 ## Global Constraints
 
-- 在 worktree `E:\Code\txt-epub\txt2book\.worktree\task-20261118-formats` 内工作。
+- 在 worktree `.worktree/task-20261118-formats` 内工作。
 - 不提交；用户可见文案中文；现有测试保持通过。
 - 新增文件遵守 `src/core/converters/<format>/` 目录约定。
 
