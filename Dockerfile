@@ -1,5 +1,5 @@
-# syntax=docker/dockerfile:1
-
+# 不使用 `# syntax=` 前置指令：本文件没有 heredoc / RUN --mount 等 BuildKit 扩展语法，
+# 去掉后由 BuildKit 内置前端解析，构建时不再额外拉取 docker/dockerfile 镜像。
 # ---------- 构建阶段：安装全部依赖并产出 dist/ 与 server-dist/ ----------
 FROM node:22-alpine AS builder
 

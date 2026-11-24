@@ -8,6 +8,7 @@ coverage/
 /data/
 .worktree/
 .superpowers/
+dist-images/
 .DS_Store
 Thumbs.db
 *.log

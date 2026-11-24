@@ -7,6 +7,8 @@
 
 自建部署、单账号登录，不依赖数据库与第三方服务；书稿正文只在浏览器内处理，只有 PDF 排版与 calibre-web 回传会经过你自己的服务端。
 
+已发布多架构（`linux/amd64` / `linux/arm64`）Docker 镜像 `liaochuanl/txt2book:latest`，用法见 [Docker 镜像](#docker-镜像)。
+
 <!--
 界面截图。替换时保持文件名不变，或同步修改下面的路径。
 -->
@@ -35,7 +37,9 @@
 - [npm 脚本](#npm-脚本)
 - [快速开始（npm）](#快速开始npm)
 - [生成密码哈希](#生成密码哈希)
+- [Docker 镜像](#docker-镜像)
 - [Docker Compose 部署](#docker-compose-部署)
+- [构建多架构镜像](#构建多架构镜像维护者)
 - [HTTPS 反向代理](#https-反向代理)
 
 **参考**
@@ -445,6 +449,31 @@ docker compose run --rm -T txt2book node server-dist/scripts/hash-password.js '�
 
 不要使用 `'密码' | npm run hash-password`：Windows PowerShell 5.1 会把管道文本转成控制台代码页，中文密码可能静默变成 `??`。PowerShell 7（`pwsh`）或先执行 `[Console]::OutputEncoding = [Text.Encoding]::UTF8` 时，管道形式也可以正常使用。
 
+## Docker 镜像
+
+Docker Hub 上的 `liaochuanl/txt2book:latest` 由同一份代码构建，支持 `linux/amd64` 与 `linux/arm64`（Apple Silicon、arm64 云服务器会按宿主机自动选择架构），内置 Noto CJK 字体，不需要额外挂载字体文件。
+
+```bash
+docker pull liaochuanl/txt2book:latest
+```
+
+运行前先按上一节准备 `.env`（至少填写 `AUTH_PASSWORD_HASH` 与 `SESSION_SECRET`），然后：
+
+```bash
+docker run -d --name txt2book --restart unless-stopped \
+  -p 8080:3000 \
+  --env-file .env \
+  -v txt2book-data:/data \
+  liaochuanl/txt2book:latest
+```
+
+- 容器内固定监听 `3000`；修改过 `PORT` 时，端口映射与探活地址要一起改。
+- `-v txt2book-data:/data` 持久化 calibre-web 连接配置；删除容器不会丢，只有删除该卷才会清空。
+- 镜像以 uid 1000 的 `node` 用户运行，挂载宿主机目录时需保证该 uid 可写。
+- 探活接口：`GET /api/health` 返回 `{"ok":true}`。
+
+也可以让 compose 使用发布镜像：把 `docker-compose.yml` 里的 `image:` 改为 `liaochuanl/txt2book:latest`，再执行 `docker compose pull && docker compose up -d --no-build`；需要从本地源码构建时仍用下面的 `--build`。
+
 ## Docker Compose 部署
 
 1. 准备配置：
@@ -468,6 +497,8 @@ docker compose run --rm -T txt2book node server-dist/scripts/hash-password.js '�
    ```bash
    docker compose up -d --build
    ```
+
+   该命令从本地 `Dockerfile` 构建镜像；想直接用 Docker Hub 上发布的多架构镜像，见 [Docker 镜像](#docker-镜像)。
 
    如果 `.env` 中的 `AUTH_PASSWORD_HASH` 或 `SESSION_SECRET` 仍未填写（或 `SESSION_SECRET` 少于 32 字符），服务会 fail-closed 拒绝启动；配合 `restart: unless-stopped`，容器会表现为反复重启。此时先执行 `docker compose logs --tail=100 txt2book` 查看缺失的配置项，补齐后重新 `docker compose up -d`。
 
@@ -524,6 +555,44 @@ services:
 ```
 
 `NODE_EXTRA_CA_CERTS` 只在进程启动时读取，改完需要 `docker compose up -d` 重建容器。项目不提供跳过 TLS 校验的开关。
+
+## 构建多架构镜像（维护者）
+
+需要 Docker Buildx。Linux 主机若未启用 binfmt，先执行 `docker run --privileged --rm tonistiigi/binfmt --install all`；Docker Desktop 已自带。
+
+一次构建 `amd64` / `arm64` 并推送到 Docker Hub：
+
+```bash
+docker login -u <用户名>
+
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t <用户名>/txt2book:latest \
+  --provenance=false \
+  --push .
+```
+
+- 多平台构建只能 `--push`，或用 `--output type=oci,dest=<文件>.tar` 导出；`--load` 只支持单平台。
+- arm64 阶段在 QEMU 下执行 `npm ci`，`sharp` 会安装 `@img/sharp-linuxmusl-arm64`。不要把基础镜像改成 `--platform=$BUILDPLATFORM`，否则会把 amd64 的 sharp 打进 arm64 镜像。
+- `--provenance=false` 让 manifest list 只保留两个平台条目，Docker Hub 不会出现 `unknown/unknown`。
+- Dockerfile 没有使用 `# syntax=` 前置指令，构建时不需要额外拉取 `docker/dockerfile` 前端镜像，受限网络下更容易成功。
+
+只导出到本地、稍后再推送：
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t <用户名>/txt2book:latest \
+  --provenance=false \
+  --output type=oci,dest=dist-images/txt2book-multiarch.tar .
+```
+
+在能访问 Docker Hub 的机器上用 skopeo 推送这个包（不需要重新构建）：
+
+```bash
+skopeo copy --all oci-archive:txt2book-multiarch.tar:latest docker://<用户名>/txt2book:latest
+```
+
+`dist-images/` 已加入 `.gitignore`。推送完成后用 `docker buildx imagetools inspect <用户名>/txt2book:latest` 确认两个架构都在。
 
 ## HTTPS 反向代理
 
@@ -646,7 +715,9 @@ docs/                   设计与计划文档、README 截图
 data/                   calibre-web 加密配置（生成，已忽略）
 dist/                   前端构建产物（生成）
 server-dist/            后端编译产物（生成）
+dist-images/            本地导出的多架构镜像包（生成，已忽略）
 Dockerfile              多阶段构建
+.dockerignore           构建上下文排除规则
 docker-compose.yml      单服务编排
 .env.example            配置示例
 LICENSE                 MIT 许可证
