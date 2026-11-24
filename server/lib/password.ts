@@ -115,6 +115,11 @@ function parseStoredHash(stored: string): ParsedHash | null {
   return { n, r, p, salt, key };
 }
 
+/** 判断存储哈希格式是否合法；不校验密码，供启动自检与日志使用。 */
+export function isPasswordHashValid(stored: string): boolean {
+  return parseStoredHash(stored) !== null;
+}
+
 /** 校验密码；存储哈希格式损坏或参数非法时返回 `false`，不抛出异常。 */
 export async function verifyPassword(plain: string, stored: string): Promise<boolean> {
   // 运行时防御：配置值可能来自未做类型校验的调用方。

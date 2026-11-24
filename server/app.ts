@@ -15,7 +15,7 @@ import { MAX_COVER_UPLOAD_BYTES, registerCoverRoutes } from "./routes/cover.js";
 import { registerExportRoutes, type ExportRouteDeps } from "./routes/export.js";
 
 /** 前端构建产物目录；源码运行时为项目根目录下的 `dist/`。 */
-const DEFAULT_DIST_DIR = fileURLToPath(new URL("../dist/", import.meta.url));
+export const DEFAULT_DIST_DIR = fileURLToPath(new URL("../dist/", import.meta.url));
 
 /** 安全头：所有响应（含错误、静态资源）统一附加（设计文档 §13.3 / 任务约定）。 */
 const SECURITY_HEADERS: Readonly<Record<string, string>> = {

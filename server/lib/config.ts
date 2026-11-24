@@ -83,10 +83,39 @@ function readString(raw: string | undefined, fallback: string): string {
   return value === "" ? fallback : value;
 }
 
+/**
+ * 读取认证相关配置：去掉首尾空白与成对的单/双引号。
+ *
+ * `docker run --env-file` 不会像 Compose 那样剥掉值外层的引号；若 `AUTH_PASSWORD_HASH`
+ * 带着引号进入容器，哈希解析会失败，任何密码都会得到 401。
+ */
+function readAuthValue(raw: string | undefined): string {
+  const value = readTrimmed(raw);
+  if (value.length >= 2) {
+    const quote = value[0];
+    if ((quote === "'" || quote === '"') && value[value.length - 1] === quote) {
+      return value.slice(1, -1).trim();
+    }
+  }
+  return value;
+}
+
+/**
+ * 读取 `AUTH_PASSWORD_HASH`：兼容 Compose 的 `$` 转义写法。
+ *
+ * Compose 要求把 `$` 写成 `$$`，但只有发生插值的场景才会还原；`env_file` 的
+ * `format: raw` 与 `docker run --env-file` 会把 `$$` 原样传进容器。scrypt 哈希
+ * 不会出现空的 `$$` 字段，因此这里统一还原，两种写法都能用。
+ */
+function readPasswordHash(raw: string | undefined): string {
+  return readAuthValue(raw).replace(/\$\$/g, "$");
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   const authDisabled = readFlag(env.AUTH_DISABLED);
-  const passwordHash = readTrimmed(env.AUTH_PASSWORD_HASH);
-  const sessionSecret = readTrimmed(env.SESSION_SECRET);
+  const passwordHash = readPasswordHash(env.AUTH_PASSWORD_HASH);
+  const sessionSecret = readAuthValue(env.SESSION_SECRET);
+  const username = readAuthValue(env.AUTH_USERNAME);
 
   if (!authDisabled) {
     const missing: string[] = [];
@@ -104,7 +133,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
 
   return {
     port: readPort(env.PORT),
-    username: readString(env.AUTH_USERNAME, DEFAULT_USERNAME),
+    username: username === "" ? DEFAULT_USERNAME : username,
     passwordHash,
     sessionSecret,
     sessionTtlDays: readPositiveInt(env.SESSION_TTL_DAYS, DEFAULT_SESSION_TTL_DAYS),

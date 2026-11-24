@@ -412,13 +412,21 @@ printf '%s' '你的密码' | npm run hash-password
 npm run hash-password -- '你的密码'
 ```
 
-把输出的哈希写入 `.env` 的 `AUTH_PASSWORD_HASH`。哈希本身含 `$` 字符，**写入 `.env` 时必须用单引号包裹**，否则 `docker compose` 会把 `$` 当作变量展开、导致哈希损坏、登录始终失败：
+把输出的哈希写入 `.env` 的 `AUTH_PASSWORD_HASH`。哈希本身含 `$` 字符，用 shell 写入文件时不要放在双引号里（`$1`、`$abc` 会被当成变量展开）；单引号或直接编辑文件都安全：
 
 ```dotenv
-AUTH_PASSWORD_HASH='scrypt$16384$8$1$...'
+AUTH_PASSWORD_HASH=scrypt$16384$8$1$...
 ```
 
-生成命令里的密码也建议用单引号包住，避免 `$` 等字符被 shell 展开。
+程序会去掉值外层成对的单/双引号，但 `docker run --env-file` 与 Compose 对引号的处理不同，建议直接写不带引号的值。生成命令里的密码也建议用单引号包住，避免 `$` 等字符被 shell 展开。
+
+如果 Compose 报 `invalid interpolation format` 或日志提示 `password_hash_invalid`，把哈希里的 `$` 全部写成 `$$`：
+
+```dotenv
+AUTH_PASSWORD_HASH=scrypt$$16384$$8$$1$$...
+```
+
+Compose 插值时会还原成一个 `$`；`docker run --env-file` 与 `env_file` 的 `format: raw` 会保留 `$$`，程序同样能识别。使用 Compose 2.30+ 时也可以给 `env_file` 项加 `format: raw`，此时保持单个 `$` 即可。
 
 已构建镜像后，在 Docker 中生成（`-T` 关闭 TTY，标准输入才能正确传入）：
 
@@ -471,6 +479,7 @@ docker run -d --name txt2book --restart unless-stopped \
 - `-v txt2book-data:/data` 持久化 calibre-web 连接配置；删除容器不会丢，只有删除该卷才会清空。
 - 镜像以 uid 1000 的 `node` 用户运行，挂载宿主机目录时需保证该 uid 可写。
 - 探活接口：`GET /api/health` 返回 `{"ok":true}`。
+- 登录失败或图标 404 时，`docker logs txt2book` / `docker compose logs --tail=100 txt2book` 会输出 `[auth]`、`[static]` 诊断行，不包含密码、哈希与 Cookie。
 
 也可以让 compose 使用发布镜像：把 `docker-compose.yml` 里的 `image:` 改为 `liaochuanl/txt2book:latest`，再执行 `docker compose pull && docker compose up -d --no-build`；需要从本地源码构建时仍用下面的 `--build`。
 
@@ -487,7 +496,7 @@ docker run -d --name txt2book --restart unless-stopped \
 2. 编辑 `.env`，至少填写：
 
    - `AUTH_USERNAME`：登录用户名。
-   - `AUTH_PASSWORD_HASH`：上一步生成的哈希，务必用单引号包裹（见“生成密码哈希”）。本机没有 Node 时，先执行 `docker compose build`，再用上文的 Docker 命令生成。
+   - `AUTH_PASSWORD_HASH`：上一步生成的哈希，直接粘贴即可（带成对引号也能识别，见“生成密码哈希”）。本机没有 Node 时，先执行 `docker compose build`，再用上文的 Docker 命令生成。
    - `SESSION_SECRET`：运行 `openssl rand -base64 32` 生成，至少 32 字符。
    - `COOKIE_SECURE`：直接 http 访问时保持 `false`；HTTPS 反代后改为 `true`。
    - `TRUST_PROXY`：只有反向代理会覆盖 `X-Forwarded-For` / `X-Forwarded-Proto` 时才设为 `true`。
@@ -760,9 +769,21 @@ npm run build   # 构建前端与后端
 
 反向代理（常见是 Nginx 默认 `client_max_body_size 1m`）先于应用拒绝了请求。按「HTTPS 反向代理」示例调到 `22m` 以上。应用自身的上限是封面 10MB、PDF 请求体 20MB。
 
-**登录一直失败，但用户名密码没错？**
+**登录一直失败，提示「用户名或密码错误」？**
 
-检查 `.env` 里的 `AUTH_PASSWORD_HASH` 是否用单引号包裹。哈希含多个 `$`，未加引号会被 `docker compose` 当作变量展开，导致哈希损坏。PowerShell 5.1 下不要用管道传中文密码（会被转成 `??`），请用参数形式 `npm run hash-password -- '你的密码'`。
+先看容器日志里的 `[auth]` 行：`docker logs txt2book` 或 `docker compose logs --tail=100 txt2book`。
+
+- `reason=password_hash_invalid`：`AUTH_PASSWORD_HASH` 格式损坏。先重新执行 `npm run hash-password -- '你的密码'` 并直接粘贴进 `.env`（不要经过双引号 shell）；若 Compose 报插值错误或吞掉 `$`，按「生成密码哈希」里的 `$$` 写法或 `format: raw` 处理。
+- `reason=username_mismatch`：输入的账号与 `AUTH_USERNAME` 不一致。启动日志会注明 username 来自 `AUTH_USERNAME` 还是默认值。
+- `reason=password_mismatch`：账号正确、密码错误。PowerShell 5.1 下不要用管道传中文密码（会被转成 `??`），请用参数形式。
+- `reason=rate_limited`：15 分钟内失败次数过多，等待后再试。
+- 日志里没有 `[auth] 登录失败`：请求没有到达应用，检查反向代理是否转发到容器 `3000`。
+
+启动时出现 `[auth] AUTH_PASSWORD_HASH 格式无效`，说明任何密码都会失败，按第一条处理。
+
+**Docker 部署后图标和 manifest 都返回 404？**
+
+镜像构建需要包含 `public/` 资源。当前 `Dockerfile` 已复制；用旧镜像时重新构建并重启容器。启动日志出现 `[static] dist/favicon.svg 不存在` 即表示构建产物缺少图标。
 
 **电纸书上背景图没显示？**
 

@@ -29,3 +29,12 @@ describe("site icons", () => {
     }
   });
 });
+
+describe("docker build inputs", () => {
+  it("copies public assets so icons are available in the image", () => {
+    // 图标与 manifest 由 Vite 从 public/ 复制到 dist/；构建上下文缺少 public 时，
+    // 镜像里的 dist 只有 assets/ 与 index.html，/favicon.svg 会 404。
+    const dockerfile = readFileSync(join(root, "Dockerfile"), "utf8");
+    expect(dockerfile).toMatch(/^COPY public \.\/public$/m);
+  });
+});

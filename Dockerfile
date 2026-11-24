@@ -12,6 +12,7 @@ RUN npm ci
 # 只复制构建所需文件，测试、文档与本地配置不进镜像。
 COPY index.html vite.config.ts tsconfig.json tsconfig.server.json ./
 COPY src ./src
+COPY public ./public
 COPY server ./server
 
 RUN npm run build

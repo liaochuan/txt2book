@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { buildServer } from "./app.js";
+import { buildServer, DEFAULT_DIST_DIR } from "./app.js";
 import { loadConfig } from "./lib/config.js";
+import { isPasswordHashValid } from "./lib/password.js";
 
 /**
  * 组装启动失败信息。
@@ -24,6 +26,27 @@ export async function start(): Promise<void> {
 
   if (config.authDisabled) {
     console.warn("⚠ 警告：AUTH_DISABLED=true，登录认证已关闭，仅限本地开发环境使用。");
+  } else {
+    const hashValid = isPasswordHashValid(config.passwordHash);
+    const usernameConfigured = (process.env.AUTH_USERNAME ?? "").trim() !== "";
+    console.info(
+      `[auth] 登录已启用 COOKIE_SECURE=${config.cookieSecure} TRUST_PROXY=${config.trustProxy} username=${usernameConfigured ? "来自 AUTH_USERNAME" : "默认"} password_hash=${hashValid ? "有效" : "无效"}`,
+    );
+    if (!hashValid) {
+      console.warn(
+        "[auth] AUTH_PASSWORD_HASH 格式无效，任何密码都会登录失败。请重新生成：npm run hash-password -- '你的密码'，并把输出直接写入 .env（避免 $ 被 shell 展开，也不要保留外层引号）。",
+      );
+    }
+  }
+
+  // 构建产物存在但缺少图标，说明 public/ 没有进入构建；图标与 manifest 会 404。
+  if (
+    existsSync(join(DEFAULT_DIST_DIR, "index.html")) &&
+    !existsSync(join(DEFAULT_DIST_DIR, "favicon.svg"))
+  ) {
+    console.warn(
+      "[static] dist/favicon.svg 不存在：构建未包含 public/ 资源，图标与 manifest 会返回 404，请重新构建镜像。",
+    );
   }
 
   const app = buildServer(config);

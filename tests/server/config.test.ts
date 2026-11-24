@@ -23,6 +23,43 @@ describe("loadConfig", () => {
     expect(loadConfig(env({ AUTH_DISABLED: "true" })).authDisabled).toBe(true);
   });
 
+  it("strips matching quotes from auth values", () => {
+    // docker run --env-file 会把引号原样传进容器；不去掉时哈希解析失败，登录永远 401。
+    const cfg = loadConfig(
+      env({
+        SESSION_SECRET: `"${SECRET}"`,
+        AUTH_PASSWORD_HASH: "'scrypt$1$1$1$AA$BB'",
+        AUTH_USERNAME: '"admin"',
+      }),
+    );
+    expect(cfg.sessionSecret).toBe(SECRET);
+    expect(cfg.passwordHash).toBe("scrypt$1$1$1$AA$BB");
+    expect(cfg.username).toBe("admin");
+  });
+
+  it("keeps unmatched quotes untouched", () => {
+    const cfg = loadConfig(
+      env({
+        SESSION_SECRET: SECRET,
+        AUTH_PASSWORD_HASH: "'scrypt$1$1$1$AA$BB",
+        AUTH_USERNAME: "admin'",
+      }),
+    );
+    expect(cfg.passwordHash).toBe("'scrypt$1$1$1$AA$BB");
+    expect(cfg.username).toBe("admin'");
+  });
+
+  it("accepts Compose $$ escaping in AUTH_PASSWORD_HASH", () => {
+    // Compose 要求 $ 写成 $$；raw env_file 与 docker run --env-file 不会还原。
+    const cfg = loadConfig(
+      env({
+        SESSION_SECRET: SECRET,
+        AUTH_PASSWORD_HASH: "scrypt$$1$$1$$1$$AA$$BB",
+      }),
+    );
+    expect(cfg.passwordHash).toBe("scrypt$1$1$1$AA$BB");
+  });
+
   it("only treats explicit true as AUTH_DISABLED", () => {
     expect(() => loadConfig(env({ AUTH_DISABLED: "false" }))).toThrow(/SESSION_SECRET/);
     expect(() => loadConfig(env({ AUTH_DISABLED: "1" }))).toThrow(/SESSION_SECRET/);

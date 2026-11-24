@@ -15,7 +15,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { AppConfig } from "../lib/config.js";
 import { clientIp } from "../lib/clientIp.js";
-import { verifyPassword } from "../lib/password.js";
+import { isPasswordHashValid, verifyPassword } from "../lib/password.js";
 import { createRateLimiter } from "../lib/rateLimit.js";
 import { SESSION_COOKIE, signSession, verifySession } from "../lib/session.js";
 
@@ -38,6 +38,15 @@ function errorBody(code: string, message: string): { error: { code: string; mess
 /** 认证响应不缓存：避免中间代理或浏览器缓存登录状态与错误。 */
 function noStore(reply: FastifyReply): FastifyReply {
   return reply.header("cache-control", "no-store");
+}
+
+/**
+ * 日志里的请求头值可能很长或包含控制字符：JSON 转义并截断，
+ * 避免换行注入伪造日志行，也避免单条日志被超大请求头撑爆。
+ */
+function logHeaderValue(value: string | string[] | undefined): string {
+  const json = JSON.stringify(value ?? "");
+  return json.length > 200 ? `${json.slice(0, 200)}…` : json;
 }
 
 /** 状态变更方法：只有这些方法参与 Origin 校验。 */
@@ -118,6 +127,10 @@ export function registerAuthRoutes(
     // 此时不做否决，仍由会话 Cookie 的 SameSite=Strict 兜底。
     if (origin === undefined) return;
     if (!isSameOrigin(origin, request.headers.host, request.protocol)) {
+      // Origin/Host 来自请求头，JSON 转义后写入日志，避免换行注入伪造日志行。
+      console.warn(
+        `[auth] 跨站请求被拒绝 method=${request.method} origin=${logHeaderValue(origin)} host=${logHeaderValue(request.headers.host)} protocol=${request.protocol} x-forwarded-proto=${logHeaderValue(request.headers["x-forwarded-proto"])}`,
+      );
       return reply.status(403).send(errorBody("FORBIDDEN", "跨站请求被拒绝。"));
     }
   });
@@ -142,6 +155,7 @@ export function registerAuthRoutes(
     // 任一维度已超限时直接拒绝，且不为另一个维度插入新桶：
     // 攻击者轮换用户名/来源时不会让限流 Map 因“已封禁维度”继续增长。
     if (ipLimiter.blocked(ipKey) || usernameLimiter.blocked(userKey)) {
+      console.warn("[auth] 登录被限流 reason=rate_limited");
       return noStore(reply)
         .header("retry-after", String(RETRY_AFTER_SECONDS))
         .status(429)
@@ -152,6 +166,7 @@ export function registerAuthRoutes(
     const ipAllowed = ipLimiter.hit(ipKey);
     const userAllowed = usernameLimiter.hit(userKey);
     if (!ipAllowed || !userAllowed) {
+      console.warn("[auth] 登录被限流 reason=rate_limited");
       return noStore(reply)
         .header("retry-after", String(RETRY_AFTER_SECONDS))
         .status(429)
@@ -164,8 +179,19 @@ export function registerAuthRoutes(
       config.passwordHash,
     );
     if (passwordTooLong || rawUsername !== config.username || !passwordOk) {
+      // 只记录失败原因，不写用户名、密码与哈希；对外响应仍统一 401。
+      const reason = passwordTooLong
+        ? "password_too_long"
+        : rawUsername !== config.username
+          ? "username_mismatch"
+          : isPasswordHashValid(config.passwordHash)
+            ? "password_mismatch"
+            : "password_hash_invalid";
+      console.warn(`[auth] 登录失败 reason=${reason}`);
       return reply.status(401).send(errorBody("INVALID_CREDENTIALS", "用户名或密码错误"));
     }
+
+    console.info("[auth] 登录成功");
 
     const now = Date.now();
     const ttlSeconds = config.sessionTtlDays * SECONDS_PER_DAY;

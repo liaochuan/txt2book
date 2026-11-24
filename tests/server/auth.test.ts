@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { createHmac } from "node:crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildServer } from "../../server/app";
 import { loadConfig } from "../../server/lib/config";
@@ -55,6 +55,27 @@ function forgeSession(payload: unknown): string {
 }
 
 describe("POST /api/auth/login", () => {
+  it("logs a rejection reason without leaking credentials", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const app = await createApp();
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        payload: { username: "admin", password: "wrong-password" },
+      });
+      expect(res.statusCode).toBe(401);
+      const logged = warn.mock.calls.map((call) => call.join(" ")).join("\n");
+      expect(logged).toContain("[auth] 登录失败");
+      expect(logged).toContain("reason=password_mismatch");
+      expect(logged).not.toContain("wrong-password");
+      expect(logged).not.toContain(storedHash);
+    } finally {
+      warn.mockRestore();
+      await app.close();
+    }
+  });
+
   it("sets an http-only strict cookie on success", async () => {
     const app = await createApp();
     try {
